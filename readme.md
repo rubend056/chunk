@@ -8,7 +8,7 @@ To [chunk information](https://en.wikipedia.org/wiki/Chunking_%28psychology%29?w
 - Dead simple text markup
 - Data relationships are explicit
 - Different visualization options
-    - Graph
+  - Graph
 - (Maybe) Only 1 full screen where we pan/zoom/select/type.
 
 Chunk `id = title` (Lowercased, trimmed, replacing space by underscore and removing all [^a-z_0-9]). This allows pretty formatting of titles but standardizes the ids.
@@ -17,15 +17,21 @@ Chunk `id = title` (Lowercased, trimmed, replacing space by underscore and remov
 
 ## Basics
 - Definitions of Objects
-    - Chunk
-        - value: string
-        - created: utc seconds since epoch
-        - modified: utc seconds since epoch
-    - User
-        - user: string
-        - pass: string
-        - salt: string (for brute force attacks)
+  - Chunk
+    - value: string
+    - created: utc seconds since epoch
+    - modified: utc seconds since epoch
+  - User
+    - user: string
+    - pass: string
+    - salt: string (for brute force attacks)
 
+- UI
+  - Chunks side by side (like notes on a scrolling page)
+  - CHUNK (pulls chunk + children merged for editing)
 
+## Implementations
 
-## Implementation
+### MVP0
+- Chunk Logic
+- Total UI

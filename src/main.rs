@@ -1,18 +1,21 @@
 use axum::{
     extract::Extension,
-    http::StatusCode,
+    http::{Method, StatusCode},
     response::IntoResponse,
     routing::{get, post},
     Json, Router,
+		error_handling::HandleError,
+		Error,
 };
 use chunk::{Chunk, User};
 use log::{info, warn};
-use serde::{Deserialize};
+use serde::Deserialize;
 use std::{
     collections::HashMap,
     net::SocketAddr,
     sync::{Arc, RwLock},
 };
+use tower_http::cors::{Any, CorsLayer};
 
 mod chunk;
 
@@ -23,10 +26,19 @@ async fn main() {
 
     let db = Db::default();
 
+    // let cors = CorsLayer::new()
+    //     // allow `GET` and `POST` when accessing the resource
+    //     .allow_methods([Method::GET, Method::POST])
+    //     // allow requests from any origin
+    //     .allow_origin(Any);
+
     // Build router
     let app = Router::new()
-        .route("/chunk", get(chunk_get).post(chunk_new))
-        .layer(Extension(db));
+        .route("/chunks", get(chunks_get).put(chunks_new))
+        .layer(Extension(db))
+        .layer(CorsLayer::permissive());
+				
+		
 
     // Listen
     let addr = SocketAddr::from(([127, 0, 0, 1], 4000));
@@ -37,8 +49,9 @@ async fn main() {
         .unwrap();
 }
 
+
 type Db = Arc<RwLock<HashMap<String, Chunk>>>;
-async fn chunk_get(Extension(db): Extension<Db>) -> impl IntoResponse {
+async fn chunks_get(Extension(db): Extension<Db>) -> impl IntoResponse {
     let chunks = db.read().unwrap();
     let chunks = chunks.values().cloned().collect::<Vec<_>>();
     Json(chunks)
@@ -50,18 +63,20 @@ struct ChunkIn {
 }
 
 // static allow: Regex = Regex::new("[^a-z0-9]").unwrap();
-async fn chunk_new(Json(input): Json<ChunkIn>, Extension(db): Extension<Db>) -> impl IntoResponse {
-    let chunk = Chunk::new(input.value);
-		// let chunk1 = chunk.clone();
+async fn chunks_new(Json(input): Json<ChunkIn>, Extension(db): Extension<Db>) -> impl IntoResponse {
+    match Chunk::new(input.value) {
+        Ok(chunk) => {
+            db.write()
+                .unwrap()
+                .entry(chunk._id.clone())
+                .and_modify(|c| {
+                    c.value = chunk.value.clone();
+                    c.modified = chunk.modified.clone();
+                })
+                .or_insert(chunk.clone());
 
-    db.write()
-        .unwrap()
-        .entry(chunk._id.clone())
-        .and_modify(|c| {
-            c.value = chunk.value.clone();
-            c.modified = chunk.modified.clone();
-        })
-        .or_insert(chunk.clone());
-
-    (StatusCode::CREATED, Json(chunk))
+            (StatusCode::CREATED, Json(chunk))
+        }
+        Err(err) => panic!("Damn, this sucks"),
+    }
 }
