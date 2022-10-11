@@ -8,7 +8,7 @@ use std::{
 /**
  * Allows for a unix timestamp (seconds since epoch) until forever
  */
-type UTC = u64;
+pub type UTC = u128;
 
 /*
 * Can hopefully model a chunk of information in your brain
@@ -25,13 +25,15 @@ pub struct Chunk {
 }
 impl Chunk {
     // pub fn id (&self) -> String {self._id}
-    pub fn new(value: String) -> Result<Chunk, &'static str> {
-        let epoch_seconds = match SystemTime::now().duration_since(UNIX_EPOCH) {
-            Ok(n) => n.as_secs(),
-            Err(_) => panic!("Can't get unix epoch?"),
+    pub fn new(value: &String) -> Result<Chunk, &'static str> {
+        let epoch_millis = match SystemTime::now().duration_since(UNIX_EPOCH) {
+            Ok(n) => n.as_millis(),
+            Err(_) => return Err("Can't get unix epoch?"),
         };
 
-        let title_rx = regex!("^# (.*)");
+        let title_rx =
+            regex!(r"^#  *(?P<title>(?: *[\w]+)+) *(?:[-=]> *(?P<relations>(?:,? *[\w]+)+) *)?$"m);
+        let end_space_rx = regex!("[ \t]+"m);
 
         // For now we'll trim anything before the first # which we'll assume is the title
         if let Some(captures) = title_rx.captures(value.as_str()) {
@@ -61,8 +63,8 @@ impl Chunk {
                 return Ok(Chunk {
                     _id,
                     value,
-                    created: epoch_seconds,
-                    modified: epoch_seconds,
+                    created: epoch_millis,
+                    modified: epoch_millis,
                 });
             }
         }
