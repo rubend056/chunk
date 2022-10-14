@@ -1,13 +1,20 @@
 #!/bin/nu
 
-rm -r dist
+# Exit if not in this directory
+if (pwd|lines).0 != "/home/rubend/p/chunk-app" {exit}
 
-cargo build --release -Z unstable-options --out-dir dist
-mkdir dist/web
+# Create output dirs
+rm -rf container/dist
+mkdir container/dist/web
 
-cd web
-rm -r dist
-yarn build
-cd ..
+# Build server
+cargo build --release -Z unstable-options --out-dir container/dist
 
-cp -r web/dist/* dist/web/
+# Build webapp
+enter web
+	rm -rf dist .parcel-cache
+	yarn parcel build --public-url /web --no-source-maps
+exit
+
+# Copy webapp to output
+cp -r web/dist/* container/dist/web/

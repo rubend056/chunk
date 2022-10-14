@@ -71,7 +71,12 @@ What would be the representation of the different views?
 
 ## Implementations
 
-### MVP0
+### MVP0 (Complete)
 Basically a notes app
 - Chunk Logic
 - Views: Notes & Edit with 0 Children
+
+### MVP1 (Complete)
+Create release of project
+
+### MVP2

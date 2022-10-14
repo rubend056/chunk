@@ -1,0 +1,12 @@
+[env]
+
+# Serve this SPA path
+WEB_DIST = { value = "web/dist", relative = true }
+# Load/Save to this file
+DB_PATH = "data.json"
+# Initialize by fetching and parsing this url instead of with a file
+DB_INIT = "https://chunk.anty.dev/chunks"
+# App won't save if this variable is set (Not implemented yet)
+NO_SAVE = ""
+
+RUST_LOG = "info"
