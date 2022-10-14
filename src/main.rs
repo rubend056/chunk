@@ -49,7 +49,6 @@ async fn main() {
             "/chunks",
             get(chunks_get).put(chunks_put).delete(chunks_del),
         )
-        .route("/", get(root))
         .merge(SpaRouter::new("/web", vars.web_dist.clone()))
         .layer(Extension(db.clone()))
         .layer(
@@ -82,10 +81,6 @@ async fn main() {
 
     let db = db.read().unwrap();
     db::save(&db).await;
-}
-
-async fn root() -> impl IntoResponse {
-    ([(header::LOCATION, "/web")], StatusCode::MOVED_PERMANENTLY)
 }
 
 
