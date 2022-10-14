@@ -1,9 +1,6 @@
 use lazy_regex::regex;
 use serde::{Deserialize, Serialize};
-use std::{
-    char::ToLowercase,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /**
  * Allows for a unix timestamp (seconds since epoch) until forever
@@ -33,7 +30,7 @@ impl Chunk {
 
         let title_rx =
             regex!(r"^#  *(?P<title>(?: *[\w]+)+) *(?:[-=]> *(?P<relations>(?:,? *[\w]+)+) *)?$"m);
-        let end_space_rx = regex!("[ \t]+"m);
+        // let end_space_rx = regex!("[ \t]+"m);
 
         // For now we'll trim anything before the first # which we'll assume is the title
         if let Some(captures) = title_rx.captures(value.as_str()) {
@@ -79,3 +76,6 @@ pub struct User {
     pass: String,
     salt: String, // (for brute force attacks)
 }
+
+
+
