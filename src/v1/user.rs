@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::utils::REGEX_USER;
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct User {
 	pub user: String,
 	pass: String, // PHC String

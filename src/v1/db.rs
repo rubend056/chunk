@@ -43,6 +43,15 @@ impl From<DB> for DBData {
 		}
 	}
 }
+impl DBData {
+	pub fn new(value: &DB) -> Self {
+		DBData {
+			chunks: value.chunks.iter().map(|c| c.1 .0.clone()).collect(),
+			users: value.users.iter().map(|c| c.1.clone()).collect(),
+		}
+	}
+}
+
 #[derive(Serialize)]
 pub enum ChunkType {
 	Owner,
@@ -120,7 +129,7 @@ impl DB {
 		self
 			.chunks
 			.iter()
-			.filter(|(id, (chunk, meta))| {
+			.filter(|(_, (chunk, meta))| {
 				(meta.access.contains(ua) || chunk.owner == ua.0)
 					&& match root {
 						Some(root) => {
@@ -134,7 +143,7 @@ impl DB {
 						None => meta._refs.is_empty(),
 					}
 			})
-			.map(|(id, (chunk, meta))| {
+			.map(|(_, (chunk, meta))| {
 				ChunkTree(
 					chunk.clone(),
 					if depth > 0 {
@@ -157,7 +166,7 @@ impl DB {
 		self
 			.chunks
 			.iter()
-			.fold(vec![], |mut acc, (id, (chunk, meta))| {
+			.fold(vec![], |mut acc, (_, (chunk, meta))| {
 				if chunk.owner == user {
 					acc.push((chunk.clone(), ChunkType::Owner));
 				};
@@ -183,7 +192,7 @@ impl DB {
 			self
 				.chunks
 				.iter()
-				.find(|(id, (chunk, meta))| meta._ref == id_or_ref)
+				.find(|(_, (_, meta))| meta._ref == id_or_ref)
 				.map(|v| v.1)
 		}) {
 			if chunk.owner == user || meta.access.contains(&(user, Access::READ)) {
@@ -256,7 +265,7 @@ impl DB {
 
 		// Check everything is good
 		for id in &ids {
-			if let Some((chunk, meta)) = self.chunks.get(id) {
+			if let Some((chunk, _)) = self.chunks.get(id) {
 				if user != &chunk.owner {
 					return Err(format!("You're not the owner of {id}"));
 				}
@@ -285,7 +294,7 @@ pub type ChunkDel = TOrTs<String>;
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use log::{info};
+	// use log::{info};
 	fn init() -> DB {
 		let mut db = DB::default();
 		assert_eq!(db.new_user("nina".to_string(), "4444".to_string()), Ok(()));
@@ -343,7 +352,7 @@ mod tests {
 	}
 	#[test]
 	fn views() {
-		let mut db = init();
+		let db = init();
 		
 		assert!(db.get_chunks("nina".to_string(), None).len() == 1);
 	}
