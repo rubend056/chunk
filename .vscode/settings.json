@@ -1,0 +1,7 @@
+{
+	"rust-analyzer.checkOnSave.overrideCommand": [
+		"/bin/nu",
+		"-c",
+		"use scripts/env.nu *; load_regex; cargo check --workspace --all-targets --message-format=json"
+	]
+}

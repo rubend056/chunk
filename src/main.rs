@@ -1,86 +1,78 @@
-use axum::{
-    http::{header, StatusCode},
-    response::IntoResponse,
-    routing::get,
-     Router, Extension,
-};
+use axum::{routing::get, Extension, Router};
 use axum_extra::routing::SpaRouter;
-use futures::{
-    prelude::*,
-    stream::FuturesUnordered,
-};
-
-use log::{info};
+use futures::{prelude::*, stream::FuturesUnordered};
+use log::{error, info};
 use std::{
-    net::{SocketAddr, },
-    str::FromStr,
-    sync::{Arc, RwLock},
+	env,
+	net::SocketAddr,
+	str::FromStr,
+	sync::{Arc, RwLock},
 };
-use tokio::signal::{
-  
-    unix::{signal, SignalKind},
-};
-use tower_http::{
-    cors::CorsLayer,
-    trace::TraceLayer,
-};
+use tokio::signal::unix::{signal, SignalKind};
+use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
-mod chunk;
-mod db;
-mod myenv;
+mod utils;
+mod v0;
+mod v1;
 
-use chunk::ends::{chunks_del, chunks_get, chunks_put};
+// use V0::ends::{chunks_del, chunks_get, chunks_put};
 
-pub type CreatedToChunk = Arc<RwLock<db::CreatedToChunk>>;
+use crate::utils::{HOST, WEB_DIST};
+use crate::v1::ends::*;
 
 #[tokio::main]
 async fn main() {
-    // Enable env_logger implemenation of log.
-    env_logger::init();
+	// Enable env_logger implemenation of log.
+	env_logger::init();
 
-    let vars = myenv::get_vars();
-    println!("{vars:?}");
+	let db = Arc::new(RwLock::new(v1::init().await));
 
-    let db = Arc::new(RwLock::new(db::init().await));
+	let j = env::vars()
+		.filter(|(k, v)| k.contains("REGEX_") || k.contains("DB_") || k == "HOST" || k == "WEB_DIST")
+		.collect::<Vec<_>>();
 
-    // Build router
-    let app = Router::new()
-        .route(
-            "/chunks",
-            get(chunks_get).put(chunks_put).delete(chunks_del),
-        )
-        .merge(SpaRouter::new("/web", vars.web_dist.clone()))
-        .layer(Extension(db.clone()))
-        .layer(
-            tower::ServiceBuilder::new()
-                .layer(TraceLayer::new_for_http())
-                .layer(CorsLayer::permissive()),
-        );
+	info!("{j:?}");
 
-    // Create Socket to listen on
-    let addr = SocketAddr::from_str(&vars.host).unwrap();
-    info!("listening on {}", addr);
+	// Build router
+	let app = Router::new()
+		.route(
+			"/chunks",
+			get(chunks_get).put(chunks_put).delete(chunks_del),
+		)
+		.merge(SpaRouter::new("/web", WEB_DIST.clone()))
+		.layer(Extension(db.clone()))
+		.layer(
+			tower::ServiceBuilder::new()
+				.layer(TraceLayer::new_for_http())
+				.layer(CorsLayer::permissive()),
+		);
 
-    // Create server
-    let server = axum::Server::bind(&addr.into())
-        .serve(app.into_make_service())
-        .with_graceful_shutdown(async move {
-            // Listen to iterrupt or terminate signal to order a shutdown if either is triggered
-            let si = signal(SignalKind::interrupt()).unwrap();
-            let st = signal(SignalKind::terminate()).unwrap();
-            let mut s_arr = [si, st];
-            let unordered = FuturesUnordered::from_iter(s_arr.iter_mut().map(|f| f.recv().fuse()));
-            unordered.take(1).collect::<Vec<_>>().await;
-            info!("Shutting down.");
-        });
+	// Create Socket to listen on
+	let addr = SocketAddr::from_str(&HOST).unwrap();
+	info!("listening on {}", addr);
 
-    // Start server by waiting on it's Future
-    if let Err(e) = server.await {
-        eprintln!("server error: {}", e);
-    }
+	// Create server
+	let server = axum::Server::bind(&addr.into())
+		.serve(app.into_make_service())
+		.with_graceful_shutdown(async move {
+			// Listen to iterrupt or terminate signal to order a shutdown if either is triggered
+			let si = signal(SignalKind::interrupt()).unwrap();
+			let st = signal(SignalKind::terminate()).unwrap();
+			let mut s_arr = [si, st];
+			let unordered = FuturesUnordered::from_iter(s_arr.iter_mut().map(|f| f.recv().fuse()));
+			unordered.take(1).collect::<Vec<_>>().await;
+			info!("Shutting down.");
+		});
 
-    let db = db.read().unwrap();
-    db::save(&db).await;
+	// Start server by waiting on it's Future
+	if let Err(e) = server.await {
+		eprintln!("server error: {}", e);
+	}
+
+	if let Ok(db) = Arc::try_unwrap(db) {
+		let db = db.into_inner().unwrap();
+		v1::save(db).await;
+	} else {
+		error!("Couldn't unwrap DB");
+	}
 }
-
-

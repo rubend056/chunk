@@ -2,3 +2,4 @@
 /dist
 data.json
 /container/dist
+*.log

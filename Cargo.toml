@@ -1,6 +1,6 @@
 [package]
 name = "chunk-app"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -12,7 +12,6 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 log = {version="0.4"}
 env_logger = "0.9"
-lazy-regex = "2.3.0"
 tower-http = {version = "0.3.4", features = ["full"]}
 mime_guess = "2.0.4"
 tower = "0.4.13"
@@ -21,4 +20,9 @@ futures-util = "0.3.24"
 futures = "0.3.24"
 hyper = {version = "0.14.20", features=["full"]}
 reqwest = "0.11.12"
+lazy_static = "1.4.0"
+regex = "1.6.0"
+proquint = "0.1.0"
+rand = "0.8.5"
+argon2 = "0.4.1"
 
