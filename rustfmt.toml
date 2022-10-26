@@ -2,3 +2,4 @@ hard_tabs = true
 blank_lines_upper_bound = 2
 tab_spaces = 2
 ignore = [ "src/v1/db.rs" ]
+max_width = 120

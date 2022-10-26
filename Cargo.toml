@@ -22,7 +22,8 @@ hyper = {version = "0.14.20", features=["full"]}
 reqwest = "0.11.12"
 lazy_static = "1.4.0"
 regex = "1.6.0"
-proquint = "0.1.0"
+proquint = { git = "https://github.com/rubend056/proquint-rs" }
 rand = "0.8.5"
 argon2 = "0.4.1"
+pasetors = "0.6.3"
 

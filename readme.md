@@ -24,7 +24,7 @@ It's easy to see the crucial thing is **Chunk Data Visualization** built on top 
     - ![](web/src/assets/icons/card-text.svg) **Shank/Edit** -> selected chunk + children up to 4N (1N default) an editor
   - Viewing
     - ![](web/src/assets/icons/clipboard.svg) **Notes** -> chunks ordered by recent side by side
-    - ![](web/src/assets/icons/grid.svg) **Labyrinth** -> selected chunk children on a grid
+    - ![](web/src/assets/icons/grid.svg) **Well** -> selected chunk children on a grid
     - ![](web/src/assets/icons/diagram-2-fill.svg) **Graph** -> nodes in a tree
 
 ## Definitions

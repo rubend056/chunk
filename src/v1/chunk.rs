@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
 
-use crate::utils::{get_secs, REGEX_ACCESS, REGEX_TITLE, REGEX_USER};
+use crate::utils::{get_secs, DbError, REGEX_ACCESS, REGEX_TITLE, REGEX_USER};
 
 #[derive(Serialize, Hash, Eq, PartialEq, Clone, Debug)]
 pub enum Access {
@@ -21,9 +21,9 @@ pub struct Chunk {
 	pub modified: u64,
 }
 impl Chunk {
-	pub fn new(id: String, value: String, owner: String) -> Result<Self, String> {
+	pub fn new(id: String, value: String, owner: String) -> Result<Self, DbError> {
 		if !REGEX_USER.is_match(owner.as_str()) {
-			return Err("User not valid".to_string());
+			return Err(DbError::InvalidUser);
 		}
 
 		let secs = get_secs();
@@ -58,12 +58,30 @@ pub fn standardize(v: &str) -> String {
 		})
 		.collect()
 }
+pub fn standardize_pretty(v: &str) -> String {
+	v.trim()
+		.chars()
+		.map(|v| match v {
+			'-' => ' ',
+			'_' => ' ',
+			_ => v,
+		})
+		.filter(|v| match v {
+			'A'..='Z' => true,
+			'a'..='z' => true,
+			'0'..='9' => true,
+			' ' => true,
+			_ => false,
+		})
+		.collect()
+}
 
 pub type UserRef = (Option<String>, String);
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ChunkMeta {
-	pub _ref: String,            // Standardized title
+	pub _ref: String, // Standardized title
+	pub title: String,
 	pub _refs: HashSet<UserRef>, // Standardized references to other chunks
 	pub access: HashSet<UserAccess>,
 }
@@ -71,7 +89,8 @@ pub struct ChunkMeta {
 impl From<&String> for ChunkMeta {
 	// Extracts metadata from Chunk
 	fn from(value: &String) -> Self {
-		let mut _ref = "".to_string();
+		let mut _ref = "".into();
+		let mut title = "".into();
 		let mut _refs = HashSet::<UserRef>::default();
 		let mut access = HashSet::<UserAccess>::default();
 
@@ -80,6 +99,7 @@ impl From<&String> for ChunkMeta {
 			if let Some(captures) = REGEX_TITLE.captures(&value) {
 				if let Some(m) = captures.get(1) {
 					_ref = standardize(m.as_str());
+					title = standardize_pretty(m.as_str());
 				}
 				if let Some(m) = captures.get(2) {
 					_refs = m
@@ -142,6 +162,7 @@ impl From<&String> for ChunkMeta {
 
 		ChunkMeta {
 			_ref,
+			title,
 			_refs,
 			access,
 		}

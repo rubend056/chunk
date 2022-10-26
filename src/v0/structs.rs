@@ -3,6 +3,8 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::utils::DbError;
+
 /**
  * Allows for a unix timestamp (seconds since epoch) until forever
  */
@@ -23,10 +25,10 @@ pub struct Chunk {
 }
 impl Chunk {
 	// pub fn id (&self) -> String {self._id}
-	pub fn new(value: &String) -> Result<Chunk, String> {
+	pub fn new(value: &String) -> Result<Chunk, DbError> {
 		let epoch_millis = match SystemTime::now().duration_since(UNIX_EPOCH) {
 			Ok(n) => n.as_micros(),
-			Err(_) => return Err("Before UNIX_EPOCH".to_string()),
+			Err(_) => panic!("Before UNIX_EPOCH"),
 		};
 
 		lazy_static! {
@@ -66,7 +68,7 @@ impl Chunk {
 			}
 		}
 
-		Err("No title on chunk".to_string())
+		Err(DbError::InvalidChunk)
 	}
 }
 

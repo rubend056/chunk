@@ -36,8 +36,7 @@ pub async fn init() -> CreatedToChunk {
 		None => match DB_PATH.clone() {
 			Some(db_path) => match fs::read_to_string(&db_path) {
 				Ok(db_json) => {
-					let db_in = serde_json::from_str::<CreatedToChunk>(&db_json)
-						.expect(&format!("Couldn't read {}", &db_path));
+					let db_in = serde_json::from_str::<CreatedToChunk>(&db_json).expect(&format!("Couldn't read {}", &db_path));
 
 					info!("Read {} for {} chunks", &db_path, db_in.len());
 

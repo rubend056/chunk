@@ -26,10 +26,7 @@ pub struct ChunkIn {
 	created: Option<UTC>,
 }
 
-pub async fn chunks_put(
-	Json(input): Json<ChunkIn>,
-	Extension(db): Extension<CreatedToChunk>,
-) -> impl IntoResponse {
+pub async fn chunks_put(Json(input): Json<ChunkIn>, Extension(db): Extension<CreatedToChunk>) -> impl IntoResponse {
 	let chunk = Chunk::new(&input.value);
 	let mut db = db.write().unwrap();
 
@@ -47,29 +44,19 @@ pub async fn chunks_put(
 				"PUT /chunks {}: {chunk:?}",
 				if modified { "modified" } else { "created" }
 			);
-			Ok((
-				if modified {
-					StatusCode::OK
-				} else {
-					StatusCode::CREATED
-				},
-				Json(chunk),
-			))
+			Ok((if modified { StatusCode::OK } else { StatusCode::CREATED }, Json(chunk)))
 		}
 		Err(err) => {
 			error!("PUT /chunks error, input: {input:?}");
 			Err((
 				StatusCode::NOT_ACCEPTABLE,
-				format!("Chunk couldn't be created {}", err),
+				format!("Chunk couldn't be created {:?}", err),
 			))
 		}
 	}
 }
 
-pub async fn chunks_del(
-	Json(input): Json<Vec<Chunk>>,
-	Extension(db): Extension<CreatedToChunk>,
-) -> impl IntoResponse {
+pub async fn chunks_del(Json(input): Json<Vec<Chunk>>, Extension(db): Extension<CreatedToChunk>) -> impl IntoResponse {
 	let mut db = db.write().unwrap();
 
 	for chunk in &input {
@@ -85,3 +72,4 @@ pub async fn chunks_del(
 
 	Ok(StatusCode::OK)
 }
+
