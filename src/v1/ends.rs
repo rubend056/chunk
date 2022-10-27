@@ -69,24 +69,32 @@ pub async fn chunks_put(
 ) -> Result<impl IntoResponse, DbError> {
 	let mut db = db.write().unwrap();
 	let is_new = chunk_in.id.is_none();
-	let (chunk, users) = db.set_chunk(&user_claims.user, (chunk_in.id, chunk_in.value))?;
+	let (chunk, users, users_access_changed) = db.set_chunk(&user_claims.user, (chunk_in.id, chunk_in.value))?;
 
 
 	tx_r
 		.send(if is_new {
-			ResourceMessage {
-				resource: format!("chunks"),
-				value: None,
+			ResourceMessage::new::<()> (
+				format!("chunks"),
+				None,
 				users,
-			}
+			)
 		} else {
-			ResourceMessage {
-				resource: format!("chunks/{}", chunk.id),
-				value: Some(serde_json::to_string(&chunk).unwrap()),
+			ResourceMessage::new (
+				format!("chunks/{}", chunk.id),
+				Some(&chunk),
 				users,
-			}
+			)
 		})
 		.unwrap();
+	
+	if users_access_changed.len() > 0 {
+		tx_r.send(ResourceMessage::new::<()> (
+			format!("chunks"),
+			None,
+			users_access_changed,
+		)).unwrap();
+	}
 
 	Ok(Json(chunk))
 }
@@ -99,14 +107,14 @@ pub async fn chunks_del(
 ) -> Result<impl IntoResponse, DbError> {
 	let mut db = db.write().unwrap();
 
-	db.del_chunk(&user_claims.user, input)?;
+	let users_to_notify = db.del_chunk(&user_claims.user, input)?;
 
 	tx_r
-		.send(ResourceMessage {
-			resource: format!("chunks"),
-			value: None,
-			users: [user_claims.user.clone()].into(),
-		})
+		.send(ResourceMessage::new::<()> (
+			format!("chunks"),
+			None,
+			users_to_notify,
+		))
 		.unwrap();
 
 	Ok(())

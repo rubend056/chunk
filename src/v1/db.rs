@@ -204,7 +204,7 @@ impl DB {
 	}
 
 
-	pub fn set_chunk(&mut self, user: &str, (id, value): (Option<String>, String)) -> Result<(Chunk, UsersToNotify), DbError> {
+	pub fn set_chunk(&mut self, user: &str, (id, value): (Option<String>, String)) -> Result<(Chunk, UsersToNotify, UsersToNotify), DbError> {
 		let meta_new = ChunkMeta::from(&value);
 		if meta_new._ref.is_empty() {
 			return Err(DbError::InvalidChunk);
@@ -234,12 +234,12 @@ impl DB {
 						}
 
 						let users = HashSet::from_iter(meta_new.access.iter().map(|(u, a)| u.clone()).chain([chunk.owner.clone()].into_iter()));
-
+						let users_access_changed = meta_new.access.symmetric_difference(&meta.access).map(|(u,a)|u.clone()).collect::<HashSet<_>>();
 						chunk.modified = get_secs();
 						chunk.value = value;
 						*meta = meta_new;
 
-						Ok((chunk.clone(), users))
+						Ok((chunk.clone(), users, users_access_changed))
 					}
 					None => {
 						println!("Chunk '{}' not found", &id);
@@ -264,7 +264,7 @@ impl DB {
 				self.chunks.insert(id, (chunk.clone(), meta_new));
 
 				// Respond
-				Ok((chunk, users))
+				Ok((chunk, users, HashSet::from([user.into()])))
 			}
 		}
 	}

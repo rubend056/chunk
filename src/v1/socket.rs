@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, sync::RwLock, time::Duration};
 
 use axum::{
 	extract::ws::{Message, WebSocket, WebSocketUpgrade},
@@ -13,17 +13,26 @@ use futures::{
 };
 use log::{error, info};
 use serde::{Deserialize, Serialize};
-use tokio::sync::{broadcast, watch};
+use tokio::{
+	sync::{broadcast, watch},
+	time,
+};
 
 use super::{auth::UserClaims, ends::DB};
 
-#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
 pub enum MessageType {
+	// A request from client
 	#[serde(rename = "Req")]
 	#[default]
 	Request,
-	#[serde(rename = "Res")]
-	Response,
+	// A response to a request
+	#[serde(rename = "Ok")]
+	Ok,
+	// An error occourred, usually because of a request
+	#[serde(rename = "Err")]
+	Error,
+	// A change happened
 	#[serde(rename = "C")]
 	Change,
 }
@@ -32,7 +41,7 @@ pub enum MessageType {
 #[serde(default)]
 pub struct SocketMessage {
 	// #[serde(skip)]
-	// id: u32,
+	id: Option<u32>,
 	#[serde(rename = "type")]
 	pub _type: MessageType,
 	pub resource: String,
@@ -40,10 +49,27 @@ pub struct SocketMessage {
 }
 #[derive(Clone, Debug)]
 pub struct ResourceMessage {
+	pub id: u32,
 	pub resource: String,
 	pub value: Option<String>,
 	pub users: HashSet<String>,
 }
+impl ResourceMessage {
+	pub fn new<T: Serialize>(resource: String, value: Option<&T>, users: HashSet<String>) -> Self {
+		Self {
+			id: unsafe {
+				let j = RESOURCE_ID.clone();
+				RESOURCE_ID += 1;
+				j
+			},
+			resource,
+			value: value.and_then(|value| Some(serde_json::to_string(value).unwrap())),
+			users,
+		}
+	}
+}
+static mut RESOURCE_ID: u32 = 0;
+
 // pub type ResourceReceiver = broadcast::Receiver<ResourceChange>;
 pub type ResourceSender = broadcast::Sender<ResourceMessage>;
 
@@ -87,17 +113,19 @@ async fn handle_socket(
 		serde_json::to_string(&chunks).unwrap()
 	};
 
-
+	let resource_id_last = RwLock::new(0u32);
+	// let socket_id_last = RwLock::new(0u32);
 	let handle_incoming = |m| {
 		match m {
 			Message::Text(m) => {
 				let m = serde_json::from_str::<SocketMessage>(&m).unwrap();
-				let reply = |value| {
+				let reply = |value, _type| {
 					Message::Text(
 						serde_json::to_string(&SocketMessage {
+							id: m.id,
 							resource: m.resource.clone(),
 							value,
-							_type: MessageType::Response,
+							_type,
 						})
 						.unwrap(),
 					)
@@ -109,9 +137,34 @@ async fn handle_socket(
 					if res.len() > 1 {
 						match m.value {
 							// Updating chunk/:id
-							Some(v) => None,
+							Some(v) => {
+								// if (m._type == MessageType::Change){return None;}
+								let id = res[1];
+								match db.write().unwrap().set_chunk(user, (Some(id.into()), v)) {
+									Ok((chunk, users, users_access_changed)) => {
+										// Send a resource message to all open sockets
+										let m = ResourceMessage::new(m.resource.clone(), Some(&chunk), users);
+										{
+											// Update our resource_id_last so we don't send the same data back when sending a signal to tx_resource
+											let mut resource_id_last = resource_id_last.write().unwrap();
+											*resource_id_last = m.id;
+										}
+										tx_resource.send(m).unwrap();
+										tx_resource
+											.send(ResourceMessage::new::<()>(
+												format!("chunks"),
+												None,
+												users_access_changed,
+											))
+											.unwrap();
+										Some(reply(None, MessageType::Ok))
+									}
+									// Couldn't write, so reply with an Error
+									Err(err) => Some(reply(Some(format!("{err:?}")), MessageType::Error)),
+								}
+							}
 							// Requesting chunk/:id
-							None => Some(reply(Some(get_chunk(res[1].into())))),
+							None => Some(reply(Some(get_chunk(res[1].into())), MessageType::Ok)),
 						}
 					} else {
 						match m.value {
@@ -120,18 +173,17 @@ async fn handle_socket(
 							// Is requesting resource
 							None => {
 								let db = db.read().unwrap();
-								Some(reply(Some(get_notes_ids())))
+								Some(reply(Some(get_notes_ids()), MessageType::Ok))
 							}
 						}
 					}
 				} else if res[0] == "views" {
 					if res.len() > 1 {
 						if res[1] == "well" {
-							Some(reply(Some(get_well_ids(if res.len() > 2 {
-								Some(res[2].into())
-							} else {
-								None
-							}))))
+							Some(reply(
+								Some(get_well_ids(if res.len() > 2 { Some(res[2].into()) } else { None })),
+								MessageType::Ok,
+							))
 						} else {
 							None
 						}
@@ -150,13 +202,25 @@ async fn handle_socket(
 
 	let handle_resource = |m: ResourceMessage| -> Vec<String> {
 		let mut ms = vec![];
+		{
+			// Only continue if the message's id is greater than our last processed id
+			let mut resource_id_last = resource_id_last.write().unwrap();
+			if m.id <= *resource_id_last {
+				return ms;
+			}
+			*resource_id_last = m.id;
+		}
+		// Only continue if the connected user is part of the list of users in the message
 		if !m.users.contains(user) {
 			return ms;
 		}
 		info!("Triggered '{}' to '{}'", &m.resource, user);
-		// Check what user can see or can't and send it over
+
+		// Get the socket id, and increment it by 1
+		// let socket_id = {let id = socket_id_last.write().unwrap();let _id = *id;*id+=1;_id};
 		let mut push_m = |r, v| {
 			let m = SocketMessage {
+				id: None,
 				resource: r,
 				value: v,
 				_type: MessageType::Change,
@@ -170,6 +234,7 @@ async fn handle_socket(
 
 	loop {
 		tokio::select! {
+			// Handles Websocket incomming
 			m = rx_socket.next() => {
 				if let Some(m) = m{
 					if let Ok(m) = m {
@@ -182,9 +247,11 @@ async fn handle_socket(
 						break;
 					}
 				}else{
+					error!("{m:?}");
 					break;
 				}
 			}
+			// Handles resource incoming
 			m = rx_resource.recv() => {
 				if let Ok(m) = m {
 					let ms = handle_resource(m);
@@ -200,11 +267,20 @@ async fn handle_socket(
 			_ = shutdown_rx.changed() => {
 				break;
 			}
+			// Send a ping message
+			_ = time::sleep(Duration::from_secs(20u64)) => {
+				tx_socket.send(Message::Ping(vec![50u8])).await.unwrap();
+				continue;
+			}
 		}
 	}
-	info!("Reuniting socket and closing");
+	// info!("Reuniting socket and closing");
 	let socket = tx_socket.reunite(rx_socket).unwrap();
-	info!("Closed socket {} : {:?}", user_claims.user, socket.close().await)
+	if let Err(err) = socket.close().await {
+		error!("Closing socket failed {:?} with {}", err, user);
+	} else {
+		info!("Closed socket with {}", user)
+	}
 
 	// If we want to split it
 	// tokio::spawn(write(sender));

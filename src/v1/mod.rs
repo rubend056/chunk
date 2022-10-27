@@ -62,7 +62,7 @@ pub async fn init() -> DB {
 pub async fn save(db: DB) {
 	if let Some(db_path) = DB_PATH.clone() {
 		let dbdata = &DBData::from(db);
-		let data = serde_json::to_string_pretty(dbdata).unwrap();
+		let data = serde_json::to_string(dbdata).unwrap();
 		match fs::write(&db_path, &data) {
 			Ok(()) => info!("Saved {} chunks on {}", dbdata.chunks.len(), db_path),
 			Err(e) => {
