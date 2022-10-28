@@ -1,3 +1,5 @@
+#![feature(is_some_and)]
+
 use axum::{
 	routing::{get, post},
 	Extension, Router,
@@ -89,7 +91,7 @@ async fn main() {
 
 	// Create server
 	let server = axum::Server::bind(&addr.into())
-		.serve(app.into_make_service())
+		.serve(app.into_make_service_with_connect_info::<SocketAddr>())
 		.with_graceful_shutdown(async move {
 			if let Err(err) = shutdown_rx.changed().await {
 				error!("Error receiving shutdown {err:?}");

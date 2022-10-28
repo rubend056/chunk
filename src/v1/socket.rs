@@ -1,7 +1,7 @@
-use std::{collections::HashSet, sync::RwLock, time::Duration};
+use std::{collections::HashSet, sync::RwLock, time::Duration, net::SocketAddr};
 
 use axum::{
-	extract::ws::{Message, WebSocket, WebSocketUpgrade},
+	extract::{ws::{Message, WebSocket, WebSocketUpgrade}, ConnectInfo},
 	response::Response,
 	Error, Extension,
 };
@@ -35,6 +35,9 @@ pub enum MessageType {
 	// A change happened
 	#[serde(rename = "C")]
 	Change,
+	// A change delta message
+	// #[serde(rename = "Cd")]
+	// ChangeDiff,
 }
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug)]
@@ -50,6 +53,7 @@ pub struct SocketMessage {
 #[derive(Clone, Debug)]
 pub struct ResourceMessage {
 	pub id: u32,
+	// pub _type: MessageType,
 	pub resource: String,
 	pub value: Option<String>,
 	pub users: HashSet<String>,
@@ -62,6 +66,7 @@ impl ResourceMessage {
 				RESOURCE_ID += 1;
 				j
 			},
+			// _type: MessageType::Change,
 			resource,
 			value: value.and_then(|value| Some(serde_json::to_string(value).unwrap())),
 			users,
@@ -79,7 +84,9 @@ pub async fn websocket_handler(
 	Extension(db): Extension<DB>,
 	Extension(tx_r): Extension<ResourceSender>,
 	Extension(shutdown_rx): Extension<watch::Receiver<()>>,
+	ConnectInfo(connect): ConnectInfo<SocketAddr>
 ) -> Response {
+	info!("Opening Websocket with {} on {}.", &_user.user, connect); 
 	ws.on_upgrade(|socket| handle_socket(socket, _user, db, tx_r, shutdown_rx))
 }
 
@@ -96,7 +103,7 @@ async fn handle_socket(
 
 	let (mut tx_socket, mut rx_socket) = socket.split();
 
-	info!("Websocket with {} opened.", user);
+	
 
 	let get_notes_ids = || {
 		let mut chunks = db.read().unwrap().get_notes(user);
@@ -104,8 +111,8 @@ async fn handle_socket(
 		let chunks = chunks.iter().map(|v| v.0.id.clone()).collect::<Vec<_>>();
 		serde_json::to_string(&chunks).unwrap()
 	};
-	let get_chunk =
-		|id| serde_json::to_string(&db.read().unwrap().get_chunk(Some(user.to_owned()), &id).unwrap()).unwrap();
+	// let get_chunk =
+	// 	|id| ;
 	let get_well_ids = |root| {
 		let mut chunks = db.read().unwrap().get_chunks(user.to_owned(), root, None).unwrap();
 		chunks.0.sort_by_key(|t| -(t.0.modified as i128));
@@ -140,23 +147,36 @@ async fn handle_socket(
 							Some(v) => {
 								// if (m._type == MessageType::Change){return None;}
 								let id = res[1];
+								let chunk_last = db.read().unwrap().get_chunk(Some(user.to_owned()), &id.to_string());
+								if let Err(err) = chunk_last {
+									return Some(reply(Some(format!("{err:?}")), MessageType::Error));
+								}
+								let chunk_last = chunk_last.unwrap().value;
 								match db.write().unwrap().set_chunk(user, (Some(id.into()), v)) {
 									Ok((chunk, users, users_access_changed)) => {
-										// Send a resource message to all open sockets
-										let m = ResourceMessage::new(m.resource.clone(), Some(&chunk), users);
+										// Send a diff message to all open sockets
+										let diff = diff_calc(&chunk_last, &chunk.value);
+										let m = ResourceMessage::new(format!("chunks/{}/diff", &chunk.id), Some(&diff), users);
+										// m._type = MessageType::ChangeDiff;
 										{
 											// Update our resource_id_last so we don't send the same data back when sending a signal to tx_resource
 											let mut resource_id_last = resource_id_last.write().unwrap();
 											*resource_id_last = m.id;
 										}
 										tx_resource.send(m).unwrap();
-										tx_resource
-											.send(ResourceMessage::new::<()>(
-												format!("chunks"),
-												None,
-												users_access_changed,
-											))
-											.unwrap();
+
+
+										// Send a message to all users who's access changed in this note change, so they can reload their views
+										if users_access_changed.len() > 0 {
+											tx_resource
+												.send(ResourceMessage::new::<()>(
+													format!("chunks"),
+													None,
+													users_access_changed,
+												))
+												.unwrap();
+										}
+
 										Some(reply(None, MessageType::Ok))
 									}
 									// Couldn't write, so reply with an Error
@@ -164,7 +184,12 @@ async fn handle_socket(
 								}
 							}
 							// Requesting chunk/:id
-							None => Some(reply(Some(get_chunk(res[1].into())), MessageType::Ok)),
+							None => Some(
+								match db.read().unwrap().get_chunk(Some(user.to_owned()), &res[1].into()) {
+									Ok(v) => reply(Some(serde_json::to_string(&v).unwrap()), MessageType::Ok),
+									Err(err) => reply(Some(serde_json::to_string(&err).unwrap()), MessageType::Error),
+								},
+							),
 						}
 					} else {
 						match m.value {
@@ -218,16 +243,17 @@ async fn handle_socket(
 
 		// Get the socket id, and increment it by 1
 		// let socket_id = {let id = socket_id_last.write().unwrap();let _id = *id;*id+=1;_id};
-		let mut push_m = |r, v| {
-			let m = SocketMessage {
-				id: None,
-				resource: r,
-				value: v,
-				_type: MessageType::Change,
-			};
-			ms.push(serde_json::to_string(&m).unwrap());
+		// let mut push_m = |r, v,t| {
+
+		// };
+		let m = SocketMessage {
+			id: None,
+			resource: m.resource,
+			value: m.value,
+			_type: MessageType::Change, // m._type
 		};
-		push_m(m.resource, m.value);
+		ms.push(serde_json::to_string(&m).unwrap());
+
 		ms
 	};
 
@@ -238,7 +264,7 @@ async fn handle_socket(
 			m = rx_socket.next() => {
 				if let Some(m) = m{
 					if let Ok(m) = m {
-						info!("Received {m:?}");
+						// info!("Received {m:?}");
 						if let Some(m) = handle_incoming(m){
 							tx_socket.send(m).await.unwrap();
 						};
@@ -280,17 +306,39 @@ async fn handle_socket(
 		error!("Closing socket failed {:?} with {}", err, user);
 	} else {
 		info!("Closed socket with {}", user)
-	}
-
-	// If we want to split it
-	// tokio::spawn(write(sender));
-	// tokio::spawn(read(receiver));
+	};
 }
 
-// async fn read(receiver: SplitStream<WebSocket>) {
-// 	// ...
-// }
 
-// async fn write(sender: SplitSink<WebSocket, Message>) {
-// 	// ...
-// }
+use diff::Result::*;
+fn diff_calc(left: &str, right: &str) -> Vec<String> {
+	let diffs = diff::lines(left, right);
+	// SO it'll be ["B44", ""]
+	let out: Vec<String> = diffs.iter().fold(vec![], |mut acc, v| {
+		match *v {
+			Left(l) => {
+				if acc.last().is_some_and(|v| v.starts_with("D")) {
+					// Add 1
+					*acc.last_mut().unwrap() = format!("D{}", (&acc.last().unwrap()[1..].parse::<u32>().unwrap() + 1));
+				} else {
+					acc.push("D1".to_string());
+				}
+			}
+			Both(_, _) => {
+				if acc.last().is_some_and(|v| v.starts_with("K")) {
+					// Add 1
+					*acc.last_mut().unwrap() = format!("K{}", (&acc.last().unwrap()[1..].parse::<u32>().unwrap() + 1));
+				} else {
+					acc.push("K1".to_string());
+				}
+			}
+			Right(l) => {
+				acc.push(format!("A{}", l));
+			}
+		}
+		acc
+	});
+	// info!("{out:?}");
+	// println!("{diffs:?}");
+	out
+}

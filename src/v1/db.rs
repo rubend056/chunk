@@ -131,7 +131,12 @@ impl DB {
 				(meta.access.contains(ua) || chunk.owner == ua.0)
 					&& match &root {
 						Some(root) => {
-							meta._refs.contains(&(Some(root.0.clone()), root.1.clone())) || (if chunk.owner == *root.0 { meta._refs.contains(&(None, root.1.clone())) } else { false })
+							meta._refs.contains(&(Some(root.0.clone()), root.1.clone()))
+								|| (if chunk.owner == *root.0 {
+									meta._refs.contains(&(None, root.1.clone()))
+								} else {
+									false
+								})
 						}
 						None => meta._refs.is_empty(),
 					}
@@ -152,13 +157,22 @@ impl DB {
 	 * Depth 0 => roots
 	 * Depth 1 => roots -> children, ...
 	 */
-	pub fn get_chunks(&self, user: String, root: Option<String>, depth: Option<u32>) -> Result<(Vec<ChunkTree>, Option<(Chunk, ChunkMeta)>), DbError> {
+	pub fn get_chunks(
+		&self,
+		user: String,
+		root: Option<String>,
+		depth: Option<u32>,
+	) -> Result<(Vec<ChunkTree>, Option<(Chunk, ChunkMeta)>), DbError> {
 		match root {
 			Some(root) => {
 				let (chunk, meta) = self._get_chunk(Some(user.clone()), &root)?;
 				// Some((, chunk))
 				Ok((
-					self.iter_tree(&(user, Access::READ), Some((chunk.owner.clone(), meta._ref.clone())), depth.unwrap_or(0)),
+					self.iter_tree(
+						&(user, Access::READ),
+						Some((chunk.owner.clone(), meta._ref.clone())),
+						depth.unwrap_or(0),
+					),
 					Some((chunk, meta)),
 				))
 			}
@@ -187,11 +201,13 @@ impl DB {
 		let user = user.unwrap_or("public".into());
 		let id_or_ref = standardize(id_or_ref);
 
-		if let Some((chunk, meta)) = self
-			.chunks
-			.get(&id_or_ref)
-			.or_else(|| self.chunks.iter().find(|(_, (_, meta))| meta._ref == id_or_ref).map(|v| v.1))
-		{
+		if let Some((chunk, meta)) = self.chunks.get(&id_or_ref).or_else(|| {
+			self
+				.chunks
+				.iter()
+				.find(|(_, (_, meta))| meta._ref == id_or_ref)
+				.map(|v| v.1)
+		}) {
 			if chunk.owner == user || meta.access.contains(&(user, Access::READ)) {
 				return Ok((chunk.clone(), meta.clone()));
 			}
@@ -204,7 +220,11 @@ impl DB {
 	}
 
 
-	pub fn set_chunk(&mut self, user: &str, (id, value): (Option<String>, String)) -> Result<(Chunk, UsersToNotify, UsersToNotify), DbError> {
+	pub fn set_chunk(
+		&mut self,
+		user: &str,
+		(id, value): (Option<String>, String),
+	) -> Result<(Chunk, UsersToNotify, UsersToNotify), DbError> {
 		let meta_new = ChunkMeta::from(&value);
 		if meta_new._ref.is_empty() {
 			return Err(DbError::InvalidChunk);
@@ -233,8 +253,18 @@ impl DB {
 							}
 						}
 
-						let users = HashSet::from_iter(meta_new.access.iter().map(|(u, a)| u.clone()).chain([chunk.owner.clone()].into_iter()));
-						let users_access_changed = meta_new.access.symmetric_difference(&meta.access).map(|(u,a)|u.clone()).collect::<HashSet<_>>();
+						let users = HashSet::from_iter(
+							meta_new
+								.access
+								.iter()
+								.map(|(u, a)| u.clone())
+								.chain([chunk.owner.clone()].into_iter()),
+						);
+						let users_access_changed = meta_new
+							.access
+							.symmetric_difference(&meta.access)
+							.map(|(u, a)| u.clone())
+							.collect::<HashSet<_>>();
 						chunk.modified = get_secs();
 						chunk.value = value;
 						*meta = meta_new;
@@ -259,7 +289,13 @@ impl DB {
 				// Create new chunk
 				let chunk = Chunk::new(id.clone(), value, user.into())?;
 
-				let users = HashSet::from_iter(meta_new.access.iter().map(|(u, a)| u.clone()).chain([chunk.owner.clone()].into_iter()));
+				let users = HashSet::from_iter(
+					meta_new
+						.access
+						.iter()
+						.map(|(u, a)| u.clone())
+						.chain([chunk.owner.clone()].into_iter()),
+				);
 
 				self.chunks.insert(id, (chunk.clone(), meta_new));
 
@@ -274,18 +310,26 @@ impl DB {
 
 		// Check everything is good
 		{
-			let mut chunks = ids.iter().map(|id| self.chunks.get(id));
-			if chunks.any(|c| c.is_none()) {
+			let chunks = ids.iter().map(|id| self.chunks.get(id)).collect::<Vec<_>>();
+			if chunks.iter().any(|c| {
+				c.is_none()
+			}) {
 				error!("Some ids not found '{:?}'.", ids);
 				return Err(DbError::NotFound);
 			}
-			let mut chunks = chunks.map(|v| v.unwrap());
-			if chunks.any(|(chunk, _)| user != &chunk.owner) {
+
+			let chunks = chunks.iter().map(|v| v.unwrap()).collect::<Vec<_>>();
+
+			if chunks.iter().any(|(chunk, _)| *user != chunk.owner) {
 				error!("Some chunks not owned by '{}' : '{:?}'.", user, ids);
 				return Err(DbError::AuthError);
 			}
 			// Add chunk access users to notify set
-			users_to_notify.extend(chunks.flat_map(|(chunk, meta)| [chunk.owner.clone()].into_iter().chain(meta.access.iter().map(|(u, _)| u.clone()))));
+			users_to_notify.extend(chunks.into_iter().flat_map(|(chunk, meta)| {
+				[chunk.owner.clone()]
+					.into_iter()
+					.chain(meta.access.iter().map(|(u, _)| u.clone()))
+			}));
 		}
 
 		// Delete
@@ -308,11 +352,15 @@ mod tests {
 		assert!(db.new_user("john".into(), "3333".into()).is_ok());
 
 		assert!(db.set_chunk("nina", (None, "# Todo".into())).is_ok());
-		assert!(db.set_chunk("nina", (None, "# Chores -> Todo\n - Vaccum\naccess: john r".into())).is_ok());
+		assert!(db
+			.set_chunk("nina", (None, "# Chores -> Todo\n - Vaccum\naccess: john r".into()))
+			.is_ok());
 
 		assert!(db.set_chunk("john", (None, "# Todo".into())).is_ok());
 		assert!(db.set_chunk("john", (None, "# Groceries -> todo".into())).is_ok());
-		assert!(db.set_chunk("john", (None, "# Work Stuff -> todo\nshare: nina write".into())).is_ok());
+		assert!(db
+			.set_chunk("john", (None, "# Work Stuff -> todo\nshare: nina write".into()))
+			.is_ok());
 
 		db
 	}
@@ -348,31 +396,72 @@ mod tests {
 		assert_eq!(db.get_notes("john").len(), 4);
 
 		assert!(db
-			.set_chunk("john", (Some(nina_chores.id.clone()), "# Chores -> Todo\n - Vaccum\naccess: john r".into()))
+			.set_chunk(
+				"john",
+				(
+					Some(nina_chores.id.clone()),
+					"# Chores -> Todo\n - Vaccum\naccess: john r".into()
+				)
+			)
 			.is_err());
-		assert!(db.set_chunk("john", (Some(nina_chores.id.clone()), "# Chores -> Todo\n - Vaccum".into())).is_err());
+		assert!(db
+			.set_chunk(
+				"john",
+				(Some(nina_chores.id.clone()), "# Chores -> Todo\n - Vaccum".into())
+			)
+			.is_err());
 
 
 		assert!(
-			db.set_chunk("nina", (Some(john_work_stuff.id.clone()), "# Work Stu -> todo\nshare: nina write".into()))
-				.is_err(),
+			db.set_chunk(
+				"nina",
+				(
+					Some(john_work_stuff.id.clone()),
+					"# Work Stu -> todo\nshare: nina write".into()
+				)
+			)
+			.is_err(),
 			"Nina has write access but can't change title, title is checked by _ref/title props in ChunkMeta"
 		);
-		let r = db.set_chunk("nina", (Some(john_work_stuff.id.clone()), "# work stuff -> Todo\nshare: nina w".into()));
+		let r = db.set_chunk(
+			"nina",
+			(
+				Some(john_work_stuff.id.clone()),
+				"# work stuff -> Todo\nshare: nina w".into(),
+			),
+		);
 		assert!(r.is_err(), "Title Changed, write should fail'{r:?}'");
-		let r = db.set_chunk("nina", (Some(john_work_stuff.id.clone()), "# Work Stuff -> Todo\nshare: nina r".into()));
+		let r = db.set_chunk(
+			"nina",
+			(
+				Some(john_work_stuff.id.clone()),
+				"# Work Stuff -> Todo\nshare: nina r".into(),
+			),
+		);
 		assert!(r.is_err(), "Can't change access, fails'{r:?}'");
 		let r = db.set_chunk(
 			"nina",
-			(Some(john_work_stuff.id.clone()), "# Work Stuff -> Todo\nCan change content :)\nshare: nina w".into()),
+			(
+				Some(john_work_stuff.id.clone()),
+				"# Work Stuff -> Todo\nCan change content :)\nshare: nina w".into(),
+			),
 		);
-		assert!(r.is_ok(), "Can change content since nina has write access, succeeds'{r:?}'");
+		assert!(
+			r.is_ok(),
+			"Can change content since nina has write access, succeeds'{r:?}'"
+		);
 	}
 	#[test]
 	fn views() {
 		let db = init();
 	}
 	#[test]
+	fn delete() {
+		let mut db = init();
+
+		let john_work_stuff = db.get_chunk(Some("john".into()), &"Work Stuff".into()).unwrap();
+		assert!(db.del_chunk(&"nina".into(), vec![john_work_stuff.id.clone()]).is_err());
+	}
+	#[test]
 	fn access() {}
-	
 }

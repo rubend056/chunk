@@ -3,6 +3,8 @@ To [chunk information](https://en.wikipedia.org/wiki/Chunking_%28psychology%29?w
 
 **Basically adding relationships/views to markdown**
 
+For the live service go here -> **[chunk.anty.dev](https://chunk.anty.dev)**
+
 ## Goals
 - **Redability** (information is easy to zoom, pick apart, and digest, it should feel like an interactable Kurtzkezart video)
 - **Editability** (editing is a click/tap away)
