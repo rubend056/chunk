@@ -6,8 +6,8 @@ use crate::utils::{get_secs, DbError, REGEX_ACCESS, REGEX_TITLE, REGEX_USER};
 
 #[derive(Serialize, Hash, Eq, PartialEq, Clone, Debug)]
 pub enum Access {
-	READ,
-	WRITE,
+	Read,
+	Write,
 }
 
 pub type UserAccess = (String, Access);
@@ -86,6 +86,59 @@ pub struct ChunkMeta {
 	pub access: HashSet<UserAccess>,
 }
 
+impl ChunkMeta {
+	pub fn to_string(&self, value: &String) -> String {
+		let mut value = value.clone();
+		if !self._ref.is_empty() {
+			value = REGEX_TITLE
+				.replace(
+					&value,
+					format!(
+						"# {}{}",
+						self.title,
+						if self._refs.len() > 0 {
+							format!(
+								" -> {}",
+								self
+									._refs
+									.iter()
+									.map(|(u, r)| format!("{}{}", u.clone().unwrap_or("".into()), r))
+									.reduce(|a, b| format!("{}, {}", a, b))
+									.unwrap()
+							)
+						} else {
+							"".into()
+						}
+					),
+				)
+				.to_string();
+		}
+
+		// Remove all replacements
+		value = REGEX_ACCESS.replace_all(&value, "").to_string();
+		if let Some(v) = self
+			.access
+			.iter()
+			.map(|(u, a)| {
+				format!(
+					"{} {}",
+					u.clone(),
+					match a {
+						Access::Read => "R",
+						Access::Write => "W",
+					}
+				)
+			})
+			.reduce(|a, b| format!("{}, {}", a, b))
+		{
+			value = format!("{value}\n{}", format!("Access: {}", v));
+		}
+
+
+		value
+	}
+}
+
 impl From<&String> for ChunkMeta {
 	// Extracts metadata from Chunk
 	fn from(value: &String) -> Self {
@@ -141,9 +194,9 @@ impl From<&String> for ChunkMeta {
 							(
 								user.into(),
 								if access == "r" || access == "read" {
-									Access::READ
+									Access::Read
 								} else if access == "w" || access == "write" {
-									Access::WRITE
+									Access::Write
 								} else {
 									panic!("access should be r/w/read/write ONLY");
 								},
@@ -152,8 +205,8 @@ impl From<&String> for ChunkMeta {
 						.for_each(|ua| {
 							access.insert(ua.clone());
 							// Duplicating read access for write access users
-							if ua.1 == Access::WRITE {
-								access.insert((ua.0, Access::READ));
+							if ua.1 == Access::Write {
+								access.insert((ua.0, Access::Read));
 							}
 						});
 				}

@@ -123,20 +123,22 @@ impl DB {
 		user.reset_pass(&old_pass, &pass)
 	}
 
-	fn iter_tree(&self, ua: &UserAccess, root: Option<(String, String)>, depth: u32) -> Vec<ChunkTree> {
+	fn iter_tree(&self, ua: &UserAccess, root: Option<(&Chunk, &ChunkMeta)>, depth: u32) -> Vec<ChunkTree> {
 		self
 			.chunks
 			.iter()
 			.filter(|(_, (chunk, meta))| {
 				(meta.access.contains(ua) || chunk.owner == ua.0)
-					&& match &root {
-						Some(root) => {
-							meta._refs.contains(&(Some(root.0.clone()), root.1.clone()))
-								|| (if chunk.owner == *root.0 {
-									meta._refs.contains(&(None, root.1.clone()))
-								} else {
-									false
-								})
+					&& match root {
+						Some((chunk_root, meta_root)) => {
+							meta
+								._refs
+								// Check if any chunk is referencing our owner & reference
+								.contains(&(Some(chunk_root.owner.clone()), meta_root._ref.clone()))
+								// Or, if the chunk's owners are the same, also check if any refs without owner point to root's
+								|| ( chunk_root.owner == chunk.owner && meta._refs.contains(&(None, meta_root._ref.clone()))) 
+								// Or, if it contains our id
+								|| meta._refs.contains(&(None, chunk_root.id.clone()))
 						}
 						None => meta._refs.is_empty(),
 					}
@@ -145,7 +147,7 @@ impl DB {
 				ChunkTree(
 					chunk.clone(),
 					if depth > 0 {
-						Some(self.iter_tree(ua, Some((chunk.owner.clone(), meta._ref.clone())), depth - 1))
+						Some(self.iter_tree(ua, Some((chunk, meta)), depth - 1))
 					} else {
 						None
 					},
@@ -168,29 +170,25 @@ impl DB {
 				let (chunk, meta) = self._get_chunk(Some(user.clone()), &root)?;
 				// Some((, chunk))
 				Ok((
-					self.iter_tree(
-						&(user, Access::READ),
-						Some((chunk.owner.clone(), meta._ref.clone())),
-						depth.unwrap_or(0),
-					),
+					self.iter_tree(&(user, Access::Read), Some((&chunk, &meta)), depth.unwrap_or(0)),
 					Some((chunk, meta)),
 				))
 			}
-			_ => Ok((self.iter_tree(&(user, Access::READ), None, depth.unwrap_or(0)), None)),
+			_ => Ok((self.iter_tree(&(user, Access::Read), None, depth.unwrap_or(0)), None)),
 		}
 	}
 	pub fn get_notes(&self, user: &str) -> Vec<ChunkView> {
-		let access = (user.to_owned(), Access::READ);
+		let access = (user.to_owned(), Access::Read);
 		self.chunks.iter().fold(vec![], |mut acc, (_, (chunk, meta))| {
 			if chunk.owner == *user {
 				acc.push((chunk.to_owned(), ChunkType::Owner));
 			} else if meta.access.contains(&access) {
 				acc.push((
 					chunk.to_owned(),
-					ChunkType::Access(if meta.access.contains(&(user.to_owned(), Access::WRITE)) {
-						Access::WRITE
+					ChunkType::Access(if meta.access.contains(&(user.to_owned(), Access::Write)) {
+						Access::Write
 					} else {
-						Access::READ
+						Access::Read
 					}),
 				));
 			};
@@ -208,7 +206,7 @@ impl DB {
 				.find(|(_, (_, meta))| meta._ref == id_or_ref)
 				.map(|v| v.1)
 		}) {
-			if chunk.owner == user || meta.access.contains(&(user, Access::READ)) {
+			if chunk.owner == user || meta.access.contains(&(user, Access::Read)) {
 				return Ok((chunk.clone(), meta.clone()));
 			}
 		}
@@ -226,9 +224,9 @@ impl DB {
 		(id, value): (Option<String>, String),
 	) -> Result<(Chunk, UsersToNotify, UsersToNotify), DbError> {
 		let meta_new = ChunkMeta::from(&value);
-		if meta_new._ref.is_empty() {
-			return Err(DbError::InvalidChunk);
-		}
+		// if meta_new._ref.is_empty() {
+		// 	return Err(DbError::InvalidChunk);
+		// }
 
 		match id {
 			Some(id) => {
@@ -243,7 +241,7 @@ impl DB {
 							// If user is the owner, then allow the change
 						} else {
 							// If user isn't the owner, then do strict checks
-							if !meta.access.contains(&(user.into(), Access::WRITE)) {
+							if !meta.access.contains(&(user.into(), Access::Write)) {
 								error!("User {} doesn't have write access.", &user);
 								return Err(DbError::AuthError);
 							}
@@ -253,18 +251,17 @@ impl DB {
 							}
 						}
 
-						let users = HashSet::from_iter(
-							meta_new
-								.access
-								.iter()
-								.map(|(u, a)| u.clone())
-								.chain([chunk.owner.clone()].into_iter()),
-						);
+						let mut users = HashSet::default();
+						users.insert(chunk.owner.clone());
+						users.extend(meta_new.access.iter().map(|(u, _)| u.clone()));
+
+
 						let users_access_changed = meta_new
 							.access
 							.symmetric_difference(&meta.access)
-							.map(|(u, a)| u.clone())
+							.map(|(u, _)| u.clone())
 							.collect::<HashSet<_>>();
+
 						chunk.modified = get_secs();
 						chunk.value = value;
 						*meta = meta_new;
@@ -293,7 +290,7 @@ impl DB {
 					meta_new
 						.access
 						.iter()
-						.map(|(u, a)| u.clone())
+						.map(|(u, _)| u.clone())
 						.chain([chunk.owner.clone()].into_iter()),
 				);
 
@@ -305,39 +302,41 @@ impl DB {
 		}
 	}
 
-	pub fn del_chunk(&mut self, user: &String, ids: Vec<String>) -> Result<UsersToNotify, DbError> {
-		let mut users_to_notify = HashSet::default();
+	pub fn del_chunk(&mut self, user: &String, ids: Vec<String>) -> Result<Vec<(Chunk, ChunkMeta)>, DbError> {
+		let mut chunks_changed = vec![];
 
 		// Check everything is good
-		{
-			let chunks = ids.iter().map(|id| self.chunks.get(id)).collect::<Vec<_>>();
-			if chunks.iter().any(|c| {
-				c.is_none()
-			}) {
+		for id in ids.clone() {
+			if let Some((chunk, meta)) = self.chunks.get(&id) {
+				if *user != chunk.owner && !meta.access.contains(&(user.clone(), Access::Read)) {
+					error!("Some chunks not owner/read access by '{}' : '{:?}'.", user, ids);
+					return Err(DbError::AuthError);
+				}
+			} else {
 				error!("Some ids not found '{:?}'.", ids);
 				return Err(DbError::NotFound);
 			}
-
-			let chunks = chunks.iter().map(|v| v.unwrap()).collect::<Vec<_>>();
-
-			if chunks.iter().any(|(chunk, _)| *user != chunk.owner) {
-				error!("Some chunks not owned by '{}' : '{:?}'.", user, ids);
-				return Err(DbError::AuthError);
+		}
+		for id in ids {
+			let mut should_remove = false;
+			{
+				let (chunk, meta) = self.chunks.get_mut(&id).unwrap();
+				if chunk.owner != *user {
+					meta.access.remove(&(user.clone(), Access::Read));
+					meta.access.remove(&(user.clone(), Access::Write));
+					chunk.value = meta.to_string(&chunk.value);
+					// Nofity users of chunk change
+					chunks_changed.push((chunk.clone(), meta.clone()));
+				} else {
+					should_remove = true;
+				}
 			}
-			// Add chunk access users to notify set
-			users_to_notify.extend(chunks.into_iter().flat_map(|(chunk, meta)| {
-				[chunk.owner.clone()]
-					.into_iter()
-					.chain(meta.access.iter().map(|(u, _)| u.clone()))
-			}));
+			if should_remove {
+				self.chunks.remove(&id);
+			}
 		}
 
-		// Delete
-		for id in &ids {
-			self.chunks.remove(id);
-		}
-
-		Ok(users_to_notify)
+		Ok(chunks_changed)
 	}
 }
 
@@ -453,7 +452,7 @@ mod tests {
 	}
 	#[test]
 	fn views() {
-		let db = init();
+		// let db = init();
 	}
 	#[test]
 	fn delete() {

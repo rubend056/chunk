@@ -12,6 +12,8 @@ use hyper::StatusCode;
 use lazy_static::lazy_static;
 use log::trace;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
+use std::default;
 use std::sync::{Arc, RwLock};
 
 pub type DB = Arc<RwLock<db::DB>>;
@@ -25,9 +27,8 @@ pub async fn chunks_get(
 	Extension(db): Extension<DB>,
 	Extension(user_claims): Extension<UserClaims>,
 ) -> Result<impl IntoResponse, DbError> {
-	let db = db.read().unwrap();
 	info!("User is {}.", &user_claims.user);
-	let mut notes = db.get_notes(&user_claims.user);
+	let mut notes = db.read().unwrap().get_notes(&user_claims.user);
 	notes.sort_by_key(|v| -(v.0.modified as i64));
 	trace!("GET /chunks len {}", notes.len());
 	Ok(Json(notes))
@@ -37,8 +38,7 @@ pub async fn chunks_get_id(
 	Extension(db): Extension<DB>,
 	Extension(user_claims): Extension<UserClaims>,
 ) -> Result<impl IntoResponse, DbError> {
-	let db = db.read().unwrap();
-	let notes = db.get_chunk(Some(user_claims.user), &id)?;
+	let notes = db.read().unwrap().get_chunk(Some(user_claims.user), &id)?;
 
 	Ok(Json(notes))
 }
@@ -48,8 +48,10 @@ pub async fn well_get(
 	Extension(db): Extension<DB>,
 	Extension(user_claims): Extension<UserClaims>,
 ) -> Result<impl IntoResponse, DbError> {
-	let db = db.read().unwrap();
-	let mut res = db.get_chunks(user_claims.user, id.and_then(|v| Some(v.0)), None)?;
+	let mut res = db
+		.read()
+		.unwrap()
+		.get_chunks(user_claims.user, id.and_then(|v| Some(v.0)), None)?;
 	res.0.sort_by_key(|v| -(v.0.modified as i64));
 
 	Ok(Json(res))
@@ -67,33 +69,30 @@ pub async fn chunks_put(
 	Extension(user_claims): Extension<UserClaims>,
 	Extension(tx_r): Extension<ResourceSender>,
 ) -> Result<impl IntoResponse, DbError> {
-	let mut db = db.write().unwrap();
+	// let mut db = ;
 	let is_new = chunk_in.id.is_none();
-	let (chunk, users, users_access_changed) = db.set_chunk(&user_claims.user, (chunk_in.id, chunk_in.value))?;
+	let (chunk, users, users_access_changed) = db
+		.write()
+		.unwrap()
+		.set_chunk(&user_claims.user, (chunk_in.id, chunk_in.value))?;
 
 
 	tx_r
 		.send(if is_new {
-			ResourceMessage::new::<()> (
-				format!("chunks"),
-				None,
-				users,
-			)
+			ResourceMessage::new::<()>(format!("chunks"), None, users)
 		} else {
-			ResourceMessage::new (
-				format!("chunks/{}", chunk.id),
-				Some(&chunk),
-				users,
-			)
+			ResourceMessage::new(format!("chunks/{}", chunk.id), Some(&chunk), users)
 		})
 		.unwrap();
-	
+
 	if users_access_changed.len() > 0 {
-		tx_r.send(ResourceMessage::new::<()> (
-			format!("chunks"),
-			None,
-			users_access_changed,
-		)).unwrap();
+		tx_r
+			.send(ResourceMessage::new::<()>(
+				format!("chunks"),
+				None,
+				users_access_changed,
+			))
+			.unwrap();
 	}
 
 	Ok(Json(chunk))
@@ -105,17 +104,31 @@ pub async fn chunks_del(
 	Extension(user_claims): Extension<UserClaims>,
 	Extension(tx_r): Extension<ResourceSender>,
 ) -> Result<impl IntoResponse, DbError> {
-	let mut db = db.write().unwrap();
+	let chunks_changed = db.write().unwrap().del_chunk(&user_claims.user, input)?;
 
-	let users_to_notify = db.del_chunk(&user_claims.user, input)?;
-
+	// Notify user than wants to delete that view changed.
 	tx_r
-		.send(ResourceMessage::new::<()> (
+		.send(ResourceMessage::new::<()>(
 			format!("chunks"),
 			None,
-			users_to_notify,
+			HashSet::from([user_claims.user]),
 		))
 		.unwrap();
+
+	// Notify other users that these notes were modified
+	chunks_changed.into_iter().for_each(|(c, m)| {
+		let mut users = HashSet::<_>::default();
+		users.insert(c.owner.to_owned());
+		users.extend(m.access.into_iter().map(|(u, _)| u));
+		tx_r
+			.send(ResourceMessage::new(
+				format!("chunks/{}", c.id.clone()),
+				Some(&c),
+				users,
+			))
+			.unwrap();
+	});
+
 
 	Ok(())
 }

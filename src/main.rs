@@ -1,4 +1,5 @@
 #![feature(is_some_and)]
+#![feature(map_many_mut)]
 
 use axum::{
 	routing::{get, post},
