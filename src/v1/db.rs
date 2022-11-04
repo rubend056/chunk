@@ -96,18 +96,48 @@ impl From<DBData> for DB {
 }
 
 impl DB {
+	
 	pub fn new_user(&mut self, user: String, pass: String) -> Result<(), DbError> {
 		if self.users.get(&user).is_some() {
 			return Err(DbError::UserTaken);
 		}
 
-		let user = User::new(user.clone(), pass)?;
+		let user_instance = User::new(user.clone(), pass)?;
 
-		if user.user == "public" {
+		if user == "public" {
 			return Err(DbError::InvalidUser);
 		}
 
-		self.users.insert(user.user.clone(), user);
+		self.users.insert(user.clone(), user_instance);
+		
+		{
+			// New user setup
+			if let Ok(chunk) = self.get_chunk(Some("rubend".into()), &"tutorial".into()){
+				self.set_chunk(&user, (None, chunk.value))?;
+			}
+		}
+		
+		Ok(())
+	}
+	pub fn remove_user(&mut self, user: String, pass: String) -> Result<(), DbError> {
+		if let Some(user_instance) = self.users.get(&user) {
+			if user == "public" {
+				return Err(DbError::InvalidUser);
+			}
+		}else {
+			return Err(DbError::AuthError);
+		}
+		
+		
+		// ! NOT IMPLEMENTED
+		// self.users.insert(user.clone(), user_instance);
+		// {
+		// 	// New user setup
+		// 	if let Ok(chunk) = self.get_chunk(Some("rubend".into()), &"tutorial".into()){
+		// 		self.set_chunk(&user, (None, chunk.value))?;
+		// 	}
+		// }
+		
 		Ok(())
 	}
 	pub fn login(&self, user: &str, pass: &str) -> Result<(), DbError> {
@@ -269,7 +299,7 @@ impl DB {
 						Ok((chunk.clone(), users, users_access_changed))
 					}
 					None => {
-						println!("Chunk '{}' not found", &id);
+						// println!("Chunk '{}' not found", &id);
 						return Err(DbError::AuthError);
 					}
 				}

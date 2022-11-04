@@ -5,6 +5,7 @@ use axum::{
 	response::{ErrorResponse, IntoResponse},
 	Json,
 };
+use serde::Serialize;
 use core::convert::TryFrom;
 use hyper::StatusCode;
 use lazy_static::lazy_static;
@@ -39,7 +40,13 @@ pub async fn login(
 
 			let pub_token = public::sign(&KP.secret, &claims, None, Some(b"implicit assertion")).unwrap();
 
-			Ok([(header::SET_COOKIE, format!("auth={pub_token}; SameSite=Strict"))])
+			Ok([(
+				header::SET_COOKIE,
+				format!(
+					"auth={pub_token}; SameSite=Strict; Max-Age={}; Path=/; Secure;",
+					60/*sec*/*60/*min*/*24/*hr*/*7 /*days*/ /*= a week in seconds*/
+				),
+			)])
 		})
 		.or_else(|err| {
 			error!("Failed login for '{}' with pass '{}': {:?}.", &user, &pass, &err);
@@ -63,7 +70,7 @@ pub async fn register(
 		})
 }
 pub async fn reset(
-	Json((user,old_pass, pass)): Json<(String, String, String)>,
+	Json((user, old_pass, pass)): Json<(String, String, String)>,
 	Extension(db): Extension<DB>,
 ) -> Result<impl IntoResponse, DbError> {
 	let mut db = db.write().unwrap();
@@ -116,7 +123,11 @@ pub async fn authenticate<B>(mut req: Request<B>, next: Next<B>) -> Result<Respo
 	return Ok(next.run(req).await);
 }
 
-#[derive(Clone)]
+pub async fn user(Extension(db): Extension<DB>, Extension(user_claims): Extension<UserClaims>) -> impl IntoResponse {
+	Json(user_claims)
+}
+
+#[derive(Clone, Serialize)]
 pub struct UserClaims {
 	pub user: String,
 }
@@ -151,8 +162,8 @@ fn get_valid_token(token: &str) -> Option<(TrustedToken, UserClaims)> {
 			Some(b"implicit assertion"),
 		) {
 			let claims = trusted_token.payload_claims().unwrap().clone();
-			println!("{:?}", claims.get_claim("data"));
-			println!("{:?}", claims.get_claim("iat"));
+			// println!("{:?}", claims.get_claim("data"));
+			// println!("{:?}", claims.get_claim("iat"));
 
 			return Some((trusted_token, UserClaims::from(&claims)));
 		}

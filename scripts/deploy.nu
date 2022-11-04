@@ -6,6 +6,7 @@ export def deploy [] {
 	
 	build
 
+	docker context use anty
 	do -i {docker stop chunk_s}
 	do -i {docker rm chunk_s}
 	docker build -t chunk ./container

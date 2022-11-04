@@ -61,7 +61,11 @@ async fn main() {
 				.route("/well", get(well_get))
 				.route("/well/:id", get(well_get))
 				.route("/stream", get(websocket_handler))
+				
+				.route("/user", get(auth::user))
+				// Provider of auth cookie token decryption
 				.route_layer(axum::middleware::from_fn(auth::authenticate))
+				
 				
 				.route("/login", post(auth::login))
 				.route("/reset", post(auth::reset))
@@ -153,7 +157,7 @@ fn init_cache() -> Cache {
 fn deinit_cache(cache: Cache) {
 	let cache = serde_json::to_string_pretty(&cache).unwrap();
 	if let Err(err) = fs::write(CACHE_PATH.clone(), &cache) {
-		error!("Couldn't write cache: '{err:?}'");
+		error!("Couldn't write cache: {err:?}");
 	}
 }
 
@@ -161,7 +165,7 @@ async fn backup_service(cache: Arc<RwLock<Cache>>, db: DB, mut shutdown_rx: watc
 	let backup_folder = Path::new(DB_BACK_FOLDER.as_str());
 	if !backup_folder.is_dir() {
 		fs::create_dir(backup_folder).unwrap();
-		info!("Created '{backup_folder:?}'.");
+		info!("Created {backup_folder:?}.");
 	}
 
 	let sec_to_hrs: u64 = 60 * 60;
@@ -188,9 +192,9 @@ async fn backup_service(cache: Arc<RwLock<Cache>>, db: DB, mut shutdown_rx: watc
 			let dbdata = serde_json::to_string(&DBData::new(&db.read().unwrap())).unwrap();
 
 			if let Err(err) = fs::write(&backup_file, &dbdata) {
-				error!("Couldn't backup to: '{err:?}'");
+				error!("Couldn't backup to: {err:?}");
 			} else {
-				info!("Backed up to '{backup_file:?}'.");
+				info!("Backed up to {backup_file:?}.");
 			}
 		} else {
 			info!("Waiting {}h till next backup", wait / sec_to_hrs as i128);

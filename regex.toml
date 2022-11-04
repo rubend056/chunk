@@ -1,5 +1,5 @@
 TITLE="^#  *((?:[,. ]*\\w+)+)[,. ]*(?:[-=]?> *((?:,? *(?:\\w+:)? *\\w+)+))? *"
-ACCESS="(?im)^(?:share|access): *((?:,? *\\w+ (?:r|w|read|write))+)$"
-ACCESS_JS="^(?:share|access): *((?:,? *\\w+ (?:r|w|read|write))+)$"
+ACCESS="(?im)^(?:share|access): *((?:,? *\\w+  *(?:r|w|read|write))+) *$"
+ACCESS_JS="^(?:share|access): *((?:,? *\\w+  *(?:r|w|read|write))+) *$"
 USER="^[a-z0-9_]+$"
 # TOKEN="^[Bb]earer ([\\w\\-]+\\.[\\w\\-]+\\.[\\w\\-]+)" 

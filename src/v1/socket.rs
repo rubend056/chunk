@@ -216,6 +216,8 @@ async fn handle_socket(
 						error!("View needs name");
 						None
 					}
+				} else if res[0] == "user" {
+					Some(reply(Some(serde_json::to_string(&user_claims).unwrap()), MessageType::Ok))
 				} else {
 					error!("Resource {} unknown", res[0]);
 					None
@@ -300,7 +302,7 @@ async fn handle_socket(
 			}
 		}
 	}
-	// info!("Reuniting socket and closing");
+	info!("Reuniting socket and closing");
 	let socket = tx_socket.reunite(rx_socket).unwrap();
 	if let Err(err) = socket.close().await {
 		error!("Closing socket failed {:?} with {}", err, user);
