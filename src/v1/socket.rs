@@ -1,7 +1,10 @@
-use std::{collections::HashSet, sync::RwLock, time::Duration, net::SocketAddr};
+use std::{collections::HashSet, net::SocketAddr, sync::RwLock, time::Duration};
 
 use axum::{
-	extract::{ws::{Message, WebSocket, WebSocketUpgrade}, ConnectInfo},
+	extract::{
+		ws::{Message, WebSocket, WebSocketUpgrade},
+		ConnectInfo,
+	},
 	response::Response,
 	Error, Extension,
 };
@@ -84,9 +87,9 @@ pub async fn websocket_handler(
 	Extension(db): Extension<DB>,
 	Extension(tx_r): Extension<ResourceSender>,
 	Extension(shutdown_rx): Extension<watch::Receiver<()>>,
-	ConnectInfo(connect): ConnectInfo<SocketAddr>
+	ConnectInfo(connect): ConnectInfo<SocketAddr>,
 ) -> Response {
-	info!("Opening Websocket with {} on {}.", &_user.user, connect); 
+	info!("Opening Websocket with {} on {}.", &_user.user, connect);
 	ws.on_upgrade(|socket| handle_socket(socket, _user, db, tx_r, shutdown_rx))
 }
 
@@ -103,7 +106,6 @@ async fn handle_socket(
 
 	let (mut tx_socket, mut rx_socket) = socket.split();
 
-	
 
 	let get_notes_ids = || {
 		let mut chunks = db.read().unwrap().get_notes(user);
@@ -217,7 +219,10 @@ async fn handle_socket(
 						None
 					}
 				} else if res[0] == "user" {
-					Some(reply(Some(serde_json::to_string(&user_claims).unwrap()), MessageType::Ok))
+					Some(reply(
+						Some(serde_json::to_string(&user_claims).unwrap()),
+						MessageType::Ok,
+					))
 				} else {
 					error!("Resource {} unknown", res[0]);
 					None
@@ -259,7 +264,7 @@ async fn handle_socket(
 		ms
 	};
 
-
+	// let mut already_closed = false;
 	loop {
 		tokio::select! {
 			// Handles Websocket incomming
@@ -275,7 +280,8 @@ async fn handle_socket(
 						break;
 					}
 				}else{
-					error!("{m:?}");
+					// already_closed = true;
+					info!("Received None, assuming closed");
 					break;
 				}
 			}
@@ -302,13 +308,15 @@ async fn handle_socket(
 			}
 		}
 	}
-	info!("Reuniting socket and closing");
+	info!("Reuniting socket");
 	let socket = tx_socket.reunite(rx_socket).unwrap();
+	// if (!already_closed) {
 	if let Err(err) = socket.close().await {
 		error!("Closing socket failed {:?} with {}", err, user);
 	} else {
 		info!("Closed socket with {}", user)
 	};
+	// };
 }
 
 

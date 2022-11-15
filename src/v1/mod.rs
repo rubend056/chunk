@@ -1,8 +1,8 @@
 use log::{error, info, trace};
-use std::fs;
+use std::{fs, path::Path};
 
 use crate::{
-	utils::{gen_proquint, DB_INIT, DB_PATH},
+	utils::{gen_proquint, DB_BACK_FOLDER, DB_INIT, DB_PATH},
 	v0,
 	v1::chunk::*,
 };
@@ -59,10 +59,10 @@ pub async fn init() -> DB {
 		},
 	}
 }
-pub async fn save(db: DB) {
+pub async fn save(db: &DB) {
 	if let Some(db_path) = DB_PATH.clone() {
-		let dbdata = &DBData::from(db);
-		let data = serde_json::to_string(dbdata).unwrap();
+		let dbdata = DBData::new(db);
+		let data = serde_json::to_string(&dbdata).unwrap();
 		match fs::write(&db_path, &data) {
 			Ok(()) => info!("Saved {} chunks on {}", dbdata.chunks.len(), db_path),
 			Err(e) => {
@@ -74,5 +74,20 @@ pub async fn save(db: DB) {
 				}
 			}
 		};
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use futures::FutureExt;
+
+	use super::init;
+
+	#[test]
+	fn d() {
+		// let db = init().await;
+		// let c = db.get_chunk(Some("rubend".into()), &"tutorial".into());
+		// println!("{c:?}");
+		// assert!()
 	}
 }

@@ -5,7 +5,6 @@ use axum::{
 	response::{ErrorResponse, IntoResponse},
 	Json,
 };
-use serde::Serialize;
 use core::convert::TryFrom;
 use hyper::StatusCode;
 use lazy_static::lazy_static;
@@ -13,6 +12,7 @@ use pasetors::claims::{Claims, ClaimsValidationRules};
 use pasetors::keys::{AsymmetricKeyPair, Generate};
 use pasetors::token::{TrustedToken, UntrustedToken};
 use pasetors::{public, version4::V4, Public};
+use serde::Serialize;
 use tower_http::set_header::SetResponseHeader;
 
 use super::ends::DB;

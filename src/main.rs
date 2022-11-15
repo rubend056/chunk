@@ -50,7 +50,7 @@ async fn main() {
 	let (shutdown_tx, mut shutdown_rx) = watch::channel(());
 	let (resource_tx, mut resource_rx) = broadcast::channel::<ResourceMessage>(16);
 
-	
+
 	// Build router
 	let app = Router::new()
 		.nest(
@@ -61,18 +61,13 @@ async fn main() {
 				.route("/well", get(well_get))
 				.route("/well/:id", get(well_get))
 				.route("/stream", get(websocket_handler))
-				
 				.route("/user", get(auth::user))
 				// Provider of auth cookie token decryption
 				.route_layer(axum::middleware::from_fn(auth::authenticate))
-				
-				
 				.route("/login", post(auth::login))
 				.route("/reset", post(auth::reset))
 				.route("/register", post(auth::register))
-				
-				.route("/mirror/:bean", get(mirror_bean))
-				,
+				.route("/mirror/:bean", get(mirror_bean)),
 		)
 		.merge(SpaRouter::new("/web", WEB_DIST.clone()))
 		.layer(
@@ -125,14 +120,16 @@ async fn main() {
 	let (server_r, backup_r) = tokio::join!(server, backup);
 	info!("Everyone has shutdown, wrapping up.");
 
+	let _db = db.clone();
 	if let Ok(db) = Arc::try_unwrap(db) {
 		let db = db.into_inner().unwrap();
-		v1::save(db).await;
+		v1::save(&db).await;
 	} else {
-		error!("Couldn't unwrap DB");
+		error!("Couldn't unwrap DB, will save anyways, but beware of this");
+		v1::save(&_db.read().unwrap()).await;
 	}
 
-	deinit_cache(Arc::try_unwrap(cache).unwrap().into_inner().unwrap());
+	deinit_cache(&cache.read().unwrap());
 }
 
 
@@ -154,12 +151,13 @@ fn init_cache() -> Cache {
 		.and_then(|v| Ok(serde_json::from_slice::<Cache>(v.as_ref()).unwrap()))
 		.unwrap_or_default()
 }
-fn deinit_cache(cache: Cache) {
-	let cache = serde_json::to_string_pretty(&cache).unwrap();
+fn deinit_cache(cache: &Cache) {
+	let cache = serde_json::to_string_pretty(cache).unwrap();
 	if let Err(err) = fs::write(CACHE_PATH.clone(), &cache) {
 		error!("Couldn't write cache: {err:?}");
 	}
 }
+
 
 async fn backup_service(cache: Arc<RwLock<Cache>>, db: DB, mut shutdown_rx: watch::Receiver<()>) {
 	let backup_folder = Path::new(DB_BACK_FOLDER.as_str());
