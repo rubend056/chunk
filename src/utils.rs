@@ -54,6 +54,6 @@ pub enum DbError {
 	UserTaken,
 	AuthError,
 	InvalidUser,
-	InvalidChunk,
+	// InvalidChunk,
 	NotFound,
 }

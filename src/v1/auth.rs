@@ -1,8 +1,8 @@
 use crate::{utils::DbError, v1::*};
 use axum::{
-	extract::{ws::WebSocket, Extension, Path, WebSocketUpgrade},
+	extract::{Extension},
 	http::header,
-	response::{ErrorResponse, IntoResponse},
+	response::{IntoResponse},
 	Json,
 };
 use core::convert::TryFrom;
@@ -13,7 +13,7 @@ use pasetors::keys::{AsymmetricKeyPair, Generate};
 use pasetors::token::{TrustedToken, UntrustedToken};
 use pasetors::{public, version4::V4, Public};
 use serde::Serialize;
-use tower_http::set_header::SetResponseHeader;
+
 
 use super::ends::DB;
 
@@ -110,7 +110,7 @@ pub async fn authenticate<B>(mut req: Request<B>, next: Next<B>) -> Result<Respo
 				acc
 			}))
 		}) {
-		if let Some(auth_value) = auth_header.iter().find(|(k, v)| *k == "auth").and_then(|v| Some(v.1)) {
+		if let Some(auth_value) = auth_header.iter().find(|(k, _v)| *k == "auth").and_then(|v| Some(v.1)) {
 			if let Some((token, _user_claims)) = get_valid_token(auth_value) {
 				user_claims = _user_claims;
 				req.extensions_mut().insert(token);
@@ -123,7 +123,7 @@ pub async fn authenticate<B>(mut req: Request<B>, next: Next<B>) -> Result<Respo
 	return Ok(next.run(req).await);
 }
 
-pub async fn user(Extension(db): Extension<DB>, Extension(user_claims): Extension<UserClaims>) -> impl IntoResponse {
+pub async fn user(Extension(_db): Extension<DB>, Extension(user_claims): Extension<UserClaims>) -> impl IntoResponse {
 	Json(user_claims)
 }
 

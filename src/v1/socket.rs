@@ -5,14 +5,12 @@ use axum::{
 		ws::{Message, WebSocket, WebSocketUpgrade},
 		ConnectInfo,
 	},
-	response::Response,
-	Error, Extension,
+	response::Response, Extension,
 };
-use axum_extra::routing::Resource;
+
 use futures::{
-	pin_mut,
 	sink::SinkExt,
-	stream::{SplitSink, SplitStream, StreamExt},
+	stream::{StreamExt},
 };
 use log::{error, info};
 use serde::{Deserialize, Serialize};
@@ -94,7 +92,7 @@ pub async fn websocket_handler(
 }
 
 async fn handle_socket(
-	mut socket: WebSocket,
+	socket: WebSocket,
 	user_claims: UserClaims,
 	db: DB,
 	tx_resource: ResourceSender,
@@ -196,10 +194,10 @@ async fn handle_socket(
 					} else {
 						match m.value {
 							// Is updating resource
-							Some(v) => None,
+							Some(_v) => None,
 							// Is requesting resource
 							None => {
-								let db = db.read().unwrap();
+								let _db = db.read().unwrap();
 								Some(reply(Some(get_notes_ids()), MessageType::Ok))
 							}
 						}
@@ -326,7 +324,7 @@ fn diff_calc(left: &str, right: &str) -> Vec<String> {
 	// SO it'll be ["B44", ""]
 	let out: Vec<String> = diffs.iter().fold(vec![], |mut acc, v| {
 		match *v {
-			Left(l) => {
+			Left(_l) => {
 				if acc.last().is_some_and(|v| v.starts_with("D")) {
 					// Add 1
 					*acc.last_mut().unwrap() = format!("D{}", (&acc.last().unwrap()[1..].parse::<u32>().unwrap() + 1));

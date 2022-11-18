@@ -1,24 +1,24 @@
 use super::auth::UserClaims;
-use super::db::ChunkTree;
-use super::socket::{ResourceMessage, ResourceSender, SocketMessage};
+
+use super::socket::{ResourceMessage, ResourceSender};
 use crate::utils::MEDIA_FOLDER;
 use crate::{utils::DbError, v1::*};
-use axum::body::{BoxBody, HttpBody, StreamBody};
-use axum::extract::{self, BodyStream, RawBody, RequestParts};
+use axum::body::{StreamBody};
+use axum::extract::{RawBody};
 use axum::{
-	extract::{ws::WebSocket, Extension, Path, WebSocketUpgrade},
+	extract::{Extension, Path},
 	http::header,
-	response::{ErrorResponse, IntoResponse},
+	response::{IntoResponse},
 	Json,
 };
 use hyper::body::to_bytes;
-use hyper::{Body, Request, StatusCode};
-use lazy_static::lazy_static;
+use hyper::{StatusCode};
+
 use log::trace;
 use proquint::Quintable;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize};
 use std::collections::HashSet;
-use std::default;
+
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, RwLock};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
@@ -184,7 +184,7 @@ use std::collections::hash_map::DefaultHasher;
 pub async fn media_post(
 	// Extension(db): Extension<DB>,
 	// Extension(user_claims): Extension<UserClaims>,
-	mut body: RawBody,
+	body: RawBody,
 ) -> impl IntoResponse {
 	let path = std::path::Path::new(MEDIA_FOLDER.as_str());
 	if !path.exists() {
@@ -204,7 +204,7 @@ pub async fn media_post(
 
 	let path = path.join(&id);
 
-	if (!path.exists()) {
+	if !path.exists() {
 		if let Err(err) = fs::write(path, body) {
 			return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("{:?}", err)));
 		}

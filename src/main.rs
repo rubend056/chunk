@@ -48,7 +48,7 @@ async fn main() {
 	let db = Arc::new(RwLock::new(v1::init().await));
 
 	let (shutdown_tx, mut shutdown_rx) = watch::channel(());
-	let (resource_tx, mut resource_rx) = broadcast::channel::<ResourceMessage>(16);
+	let (resource_tx, _resource_rx) = broadcast::channel::<ResourceMessage>(16);
 
 
 	// Build router
@@ -121,7 +121,7 @@ async fn main() {
 	info!("Told everyone to shutdown.");
 
 	info!("Waiting for everyone to shutdown.");
-	let (server_r, backup_r) = join(server, backup).await;
+	let (_server_r, _backup_r) = join(server, backup).await;
 	info!("Everyone has shutdown, will give sockets 25ms time to wrap up.");
 	time::sleep(Duration::from_millis(25)).await;
 

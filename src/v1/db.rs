@@ -16,9 +16,9 @@
 		Querying this with different views
 
 */
-use std::{collections::{HashMap, HashSet}, hash::Hash, default};
+use std::{collections::{HashMap, HashSet}};
 
-use log::{error, info};
+use log::{error};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -121,27 +121,27 @@ impl DB {
 		
 		Ok(())
 	}
-	pub fn remove_user(&mut self, user: String, pass: String) -> Result<(), DbError> {
-		if let Some(user_instance) = self.users.get(&user) {
-			if user == "public" {
-				return Err(DbError::InvalidUser);
-			}
-		}else {
-			return Err(DbError::AuthError);
-		}
+	// pub fn remove_user(&mut self, user: String, _pass: String) -> Result<(), DbError> {
+	// 	if let Some(_user_instance) = self.users.get(&user) {
+	// 		if user == "public" {
+	// 			return Err(DbError::InvalidUser);
+	// 		}
+	// 	}else {
+	// 		return Err(DbError::AuthError);
+	// 	}
 		
 		
-		// ! NOT IMPLEMENTED
-		// self.users.insert(user.clone(), user_instance);
-		// {
-		// 	// New user setup
-		// 	if let Ok(chunk) = self.get_chunk(Some("rubend".into()), &"tutorial".into()){
-		// 		self.set_chunk(&user, (None, chunk.value))?;
-		// 	}
-		// }
+	// 	// ! NOT IMPLEMENTED
+	// 	// self.users.insert(user.clone(), user_instance);
+	// 	// {
+	// 	// 	// New user setup
+	// 	// 	if let Ok(chunk) = self.get_chunk(Some("rubend".into()), &"tutorial".into()){
+	// 	// 		self.set_chunk(&user, (None, chunk.value))?;
+	// 	// 	}
+	// 	// }
 		
-		Ok(())
-	}
+	// 	Ok(())
+	// }
 	pub fn login(&self, user: &str, pass: &str) -> Result<(), DbError> {
 		let user = self.users.get(user).ok_or(DbError::AuthError)?;
 		if !user.verify(&pass) {
