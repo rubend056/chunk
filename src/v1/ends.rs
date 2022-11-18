@@ -1,20 +1,28 @@
 use super::auth::UserClaims;
 use super::db::ChunkTree;
 use super::socket::{ResourceMessage, ResourceSender, SocketMessage};
+use crate::utils::MEDIA_FOLDER;
 use crate::{utils::DbError, v1::*};
+use axum::body::{BoxBody, HttpBody, StreamBody};
+use axum::extract::{self, BodyStream, RawBody, RequestParts};
 use axum::{
 	extract::{ws::WebSocket, Extension, Path, WebSocketUpgrade},
-	http,
+	http::header,
 	response::{ErrorResponse, IntoResponse},
 	Json,
 };
-use hyper::StatusCode;
+use hyper::body::to_bytes;
+use hyper::{Body, Request, StatusCode};
 use lazy_static::lazy_static;
 use log::trace;
+use proquint::Quintable;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::default;
+use std::hash::{Hash, Hasher};
 use std::sync::{Arc, RwLock};
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
+use tokio_util::io::ReaderStream;
 
 pub type DB = Arc<RwLock<db::DB>>;
 impl IntoResponse for DbError {
@@ -133,6 +141,77 @@ pub async fn chunks_del(
 	Ok(())
 }
 
+pub async fn media_get(
+	Path(id): Path<String>,
+	// Extension(db): Extension<DB>,
+	// Extension(user_claims): Extension<UserClaims>,
+) -> Result<impl IntoResponse, impl IntoResponse> {
+	// `File` implements `AsyncRead`
+	let path = std::path::Path::new(MEDIA_FOLDER.as_str());
+	let path = path.join(id);
+
+	let mut file = match tokio::fs::File::open(&path).await {
+		Ok(file) => file,
+		Err(err) => return Err((StatusCode::NOT_FOUND, format!("File not found: {}", err))),
+	};
+
+	let mut buf = [0u8; 64];
+	if let Ok(_size) = file.read(&mut buf).await {
+		file.rewind().await.unwrap(); // Reset the counter to start of file
+		let _type = infer::get(&buf);
+		// // convert the `AsyncRead` into a `Stream`
+		let stream = ReaderStream::new(file);
+
+		// // convert the `Stream` into an `axum::body::HttpBody`
+		let body = StreamBody::new(stream);
+
+		let headers = match _type {
+			Some(_type) => [(header::CONTENT_TYPE, _type.mime_type())],
+			None => [(header::CONTENT_TYPE, "text/plain")],
+		};
+		Ok((headers, body))
+	} else {
+		Err((StatusCode::NO_CONTENT, "Error reading file?".to_string()))
+	}
+}
+
+use std::collections::hash_map::DefaultHasher;
+/**
+- [ ] Uploading to POST `api/media` will
+	- create `data/media` if it doesn't exist
+	- save under `data/media/<32bit_hash_proquint>`, return error `<hash> exists` if exists already, else, return `<hash>`.
+*/
+pub async fn media_post(
+	// Extension(db): Extension<DB>,
+	// Extension(user_claims): Extension<UserClaims>,
+	mut body: RawBody,
+) -> impl IntoResponse {
+	let path = std::path::Path::new(MEDIA_FOLDER.as_str());
+	if !path.exists() {
+		fs::create_dir(&path).unwrap();
+		info!("Created media folder");
+	}
+	// lazy_static! {
+	// 	pub static ref hasher: DefaultHasher = ;
+	// }
+	let mut hasher = DefaultHasher::new();
+	let body = to_bytes(body.0).await.unwrap();
+	// let body = body.data().await.unwrap().unwrap();
+
+	body.hash(&mut hasher);
+	let hash = hasher.finish();
+	let id = hash.to_quint();
+
+	let path = path.join(&id);
+
+	if (!path.exists()) {
+		if let Err(err) = fs::write(path, body) {
+			return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("{:?}", err)));
+		}
+	}
+
+	Ok(id)
+}
 
 /** Used to validate that it's other servers that want this */
 pub static MAGIC_BEAN: &'static str = "alkjgblnvcxlk_BANDFLKj";

@@ -27,4 +27,6 @@ rand = "0.8.5"
 argon2 = "0.4.1"
 pasetors = "0.6.3"
 diff = "0.1.13"
+tokio-util = "0.7.4"
+infer = "0.11.0"
 

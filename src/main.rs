@@ -6,7 +6,7 @@ use axum::{
 	Extension, Router,
 };
 use axum_extra::routing::SpaRouter;
-use futures::{future::Either, pin_mut, prelude::*};
+use futures::future::join;
 use log::{error, info};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -15,15 +15,15 @@ use std::{
 	path::Path,
 	str::FromStr,
 	sync::{Arc, RwLock},
-	time::{Duration, SystemTime},
+	time::Duration,
 };
 use tokio::{
 	signal::unix::{signal, SignalKind},
 	sync::{broadcast, watch},
 	time,
 };
-use tower_http::{cors::CorsLayer, trace::TraceLayer};
-use utils::{get_secs, CACHE_PATH, DB_BACK_FOLDER};
+use tower_http::trace::TraceLayer;
+use utils::{get_secs, CACHE_PATH, DB_BACKUP_FOLDER};
 use v1::{db::DBData, socket::websocket_handler};
 
 mod utils;
@@ -62,7 +62,9 @@ async fn main() {
 				.route("/well/:id", get(well_get))
 				.route("/stream", get(websocket_handler))
 				.route("/user", get(auth::user))
-				// Provider of auth cookie token decryption
+				.route("/media", post(media_post))
+				.route("/media/:id", get(media_get))
+				// User authentication, provider of UserClaims
 				.route_layer(axum::middleware::from_fn(auth::authenticate))
 				.route("/login", post(auth::login))
 				.route("/reset", post(auth::reset))
@@ -95,6 +97,8 @@ async fn main() {
 		.with_graceful_shutdown(async move {
 			if let Err(err) = shutdown_rx.changed().await {
 				error!("Error receiving shutdown {err:?}");
+			} else {
+				info!("Http server shutting down gracefully");
 			}
 		});
 
@@ -117,8 +121,9 @@ async fn main() {
 	info!("Told everyone to shutdown.");
 
 	info!("Waiting for everyone to shutdown.");
-	let (server_r, backup_r) = tokio::join!(server, backup);
-	info!("Everyone has shutdown, wrapping up.");
+	let (server_r, backup_r) = join(server, backup).await;
+	info!("Everyone has shutdown, will give sockets 25ms time to wrap up.");
+	time::sleep(Duration::from_millis(25)).await;
 
 	let _db = db.clone();
 	if let Ok(db) = Arc::try_unwrap(db) {
@@ -160,7 +165,7 @@ fn deinit_cache(cache: &Cache) {
 
 
 async fn backup_service(cache: Arc<RwLock<Cache>>, db: DB, mut shutdown_rx: watch::Receiver<()>) {
-	let backup_folder = Path::new(DB_BACK_FOLDER.as_str());
+	let backup_folder = Path::new(DB_BACKUP_FOLDER.as_str());
 	if !backup_folder.is_dir() {
 		fs::create_dir(backup_folder).unwrap();
 		info!("Created {backup_folder:?}.");

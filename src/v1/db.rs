@@ -16,7 +16,7 @@
 		Querying this with different views
 
 */
-use std::collections::{HashMap, HashSet};
+use std::{collections::{HashMap, HashSet}, hash::Hash, default};
 
 use log::{error, info};
 use serde::{Deserialize, Serialize};
@@ -70,27 +70,29 @@ pub struct DB {
 	// _chunks: Vec<>,
 	chunks: HashMap<String, ChunkAndMeta>,
 	users: HashMap<String, User>,
-	// tree: HashMap<String, Vec<String>>,
-	/* rubend_read -> sara_notes */ // Updating is a pain bc we need to see who
-	// access: HashMap<UserAccess, HashSet<UserRef>> // An update would remove
-	/* I need a structure that's fast to modify/lookup */
-	/*
-	 Should we separate access to different structure?
-	 Since we always come with a user, we always need to know what a user has access to,
-	 but... since a note's access is inhereted we'd need to change this no matter what.
-	 Best thing is to move through the tree on every query and keep in memory who when were has access to what.
-	*/
-	// access:
+	
+	// For faster ref->id lookups, that means we need to update this on create/remove/modify
+	ref_id: HashMap<String, Vec<String>>,
 }
 impl From<DBData> for DB {
 	fn from(value: DBData) -> Self {
+		let chunks = value
+		.chunks
+		.into_iter()
+		.map(|chunk| (chunk.id.clone(), (chunk.clone(), ChunkMeta::from(&chunk.value))))
+		.collect::<HashMap<String, ChunkAndMeta>>();
+		// Ref->id on conversion
+		let mut ref_id = HashMap::<String, Vec<String>>::default();
+		chunks.iter().for_each(|(id,(_,meta))| {
+			ref_id.entry(meta._ref.to_owned())
+			.and_modify(|v| v.push(id.to_owned()))
+			.or_insert(vec!(id.to_owned()));
+		});
+		
 		DB {
-			chunks: value
-				.chunks
-				.into_iter()
-				.map(|chunk| (chunk.id.clone(), (chunk.clone(), ChunkMeta::from(&chunk.value))))
-				.collect(),
+			chunks,
 			users: value.users.into_iter().map(|user| (user.user.clone(), user)).collect(),
+			ref_id
 		}
 	}
 }
@@ -260,13 +262,11 @@ impl DB {
 
 		match id {
 			Some(id) => {
-				// Create a new note with info the user gave us
-				// let mut chunk_new = Chunk::new(id, value, user)?;
-				// Calculate it's metadata
-
-				// Make sure user can do what he wants
+				// Modifying
 				match self.chunks.get_mut(&id) {
 					Some((chunk, meta)) => {
+						
+						// Make sure user can do what he wants
 						if chunk.owner == user {
 							// If user is the owner, then allow the change
 						} else {
@@ -280,32 +280,45 @@ impl DB {
 								return Err(DbError::AuthError);
 							}
 						}
-
+						
+						// Modify chunk
 						let mut users = HashSet::default();
 						users.insert(chunk.owner.clone());
 						users.extend(meta_new.access.iter().map(|(u, _)| u.clone()));
-
 
 						let users_access_changed = meta_new
 							.access
 							.symmetric_difference(&meta.access)
 							.map(|(u, _)| u.clone())
 							.collect::<HashSet<_>>();
-
+						
+						// Modify _ref->id
+						if meta._ref != meta_new._ref{
+							let mut d = false;
+							{
+								self.ref_id.entry(meta._ref.clone()).and_modify(|v| {
+									v.retain(|v| v!=&chunk.id);
+									if v.is_empty() {d=true;}
+								});
+								self.ref_id.entry(meta_new._ref.clone())
+									.and_modify(|v| v.push(chunk.id.to_owned()))
+									.or_insert(vec!(chunk.id.to_owned()));
+							}	
+						}
+						
 						chunk.modified = get_secs();
 						chunk.value = value;
-						*meta = meta_new;
-
+						*meta = meta_new.clone();
+						
 						Ok((chunk.clone(), users, users_access_changed))
 					}
 					None => {
-						// println!("Chunk '{}' not found", &id);
 						return Err(DbError::AuthError);
 					}
 				}
 			}
 			None => {
-				// User wants to create a chunk
+				// Creating
 
 				// Generate non-colliding id
 				let mut id = gen_proquint();
@@ -323,7 +336,13 @@ impl DB {
 						.map(|(u, _)| u.clone())
 						.chain([chunk.owner.clone()].into_iter()),
 				);
-
+				
+				// Modify _ref->id
+				self.ref_id.entry(meta_new._ref.clone())
+									.and_modify(|v| v.push(chunk.id.to_owned()))
+									.or_insert(vec!(chunk.id.to_owned()));
+				
+				
 				self.chunks.insert(id, (chunk.clone(), meta_new));
 
 				// Respond
@@ -359,10 +378,15 @@ impl DB {
 					chunks_changed.push((chunk.clone(), meta.clone()));
 				} else {
 					should_remove = true;
+					
+					// Modify _ref->id
+					self.ref_id.remove(&meta._ref);
 				}
 			}
 			if should_remove {
 				self.chunks.remove(&id);
+				
+				
 			}
 		}
 

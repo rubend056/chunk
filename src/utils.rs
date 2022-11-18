@@ -21,7 +21,7 @@ pub fn gen_proquint() -> String {
 
 lazy_static! {
 	pub static ref REGEX_TITLE: Regex = Regex::new(env!("REGEX_TITLE")).unwrap();
-	pub static ref REGEX_ACCESS: Regex = Regex::new(env!("REGEX_ACCESS")).unwrap();
+	pub static ref REGEX_ACCESS: Regex = Regex::new(format!("(?im){}", env!("REGEX_ACCESS")).as_str() ).unwrap();
 	pub static ref REGEX_USER: Regex = Regex::new(env!("REGEX_USER")).unwrap();
 }
 
@@ -35,7 +35,8 @@ pub struct Env {
 lazy_static! {
 	pub static ref DB_PATH: Option<String> = env::var("DB_PATH").ok();
 	pub static ref DB_INIT: Option<String> = env::var("DB_INIT").ok();
-	pub static ref DB_BACK_FOLDER: String = env::var("DB_BACK_FOLDER").unwrap_or("backups".into());
+	pub static ref DB_BACKUP_FOLDER: String = env::var("DB_BACKUP_FOLDER").unwrap_or("backups".into());
+	pub static ref MEDIA_FOLDER: String = env::var("MEDIA_FOLDER").unwrap_or("media".into());
 	pub static ref CACHE_PATH: String = env::var("CACHE_PATH").unwrap_or("cache.json".into());
 	pub static ref WEB_DIST: String = env::var("WEB_DIST").unwrap_or("web".into());
 	pub static ref HOST: String =

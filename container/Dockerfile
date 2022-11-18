@@ -6,6 +6,6 @@ copy ./dist ./
 
 expose 4000
 
-env RUST_LOG=info  CACHE_PATH=data/cache.json  DB_PATH=data/db.json DB_BACK_FOLDER=backup
+env RUST_LOG=info  CACHE_PATH=data/cache.json  DB_PATH=data/db.json DB_BACKUP_FOLDER=backup  MEDIA_FOLDER=data/media
 
 cmd ["./chunk-app"]

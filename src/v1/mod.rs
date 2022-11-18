@@ -2,7 +2,7 @@ use log::{error, info, trace};
 use std::{fs, path::Path};
 
 use crate::{
-	utils::{gen_proquint, DB_BACK_FOLDER, DB_INIT, DB_PATH},
+	utils::{gen_proquint, DB_BACKUP_FOLDER, DB_INIT, DB_PATH},
 	v0,
 	v1::chunk::*,
 };
