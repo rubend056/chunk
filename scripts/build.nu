@@ -18,7 +18,8 @@ export def build [] {
 	mkdir container/dist/web
 
 	# Build server
-	cargo build --release -Z unstable-options --out-dir container/dist
+	cargo build --release
+	cp target/release/chunk-app container/dist/
 
 	# Build webapp
 	enter web

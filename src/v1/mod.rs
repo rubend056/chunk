@@ -1,9 +1,7 @@
 use log::{error, info, trace};
-use std::{fs};
+use std::fs;
 
-use crate::{
-	utils::{DB_INIT, DB_PATH},
-};
+use crate::utils::{DB_INIT, DB_PATH};
 
 use self::{
 	db::{DBData, DB},
@@ -14,9 +12,9 @@ pub mod auth;
 pub mod chunk;
 pub mod db;
 pub mod ends;
+pub mod js;
 pub mod socket;
 pub mod user;
-
 
 pub async fn init() -> DB {
 	fn failover(path: &str) -> DB {
@@ -77,9 +75,6 @@ pub async fn save(db: &DB) {
 
 #[cfg(test)]
 mod tests {
-	
-
-	
 
 	#[test]
 	fn d() {

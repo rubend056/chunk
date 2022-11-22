@@ -5,13 +5,11 @@ use axum::{
 		ws::{Message, WebSocket, WebSocketUpgrade},
 		ConnectInfo,
 	},
-	response::Response, Extension,
+	response::Response,
+	Extension,
 };
 
-use futures::{
-	sink::SinkExt,
-	stream::{StreamExt},
-};
+use futures::{sink::SinkExt, stream::StreamExt};
 use log::{error, info};
 use serde::{Deserialize, Serialize};
 use tokio::{
@@ -104,7 +102,6 @@ async fn handle_socket(
 
 	let (mut tx_socket, mut rx_socket) = socket.split();
 
-
 	let get_notes_ids = || {
 		let mut chunks = db.read().unwrap().get_notes(user);
 		chunks.sort_by_key(|(chunk, _)| -(chunk.modified as i128));
@@ -164,7 +161,6 @@ async fn handle_socket(
 											*resource_id_last = m.id;
 										}
 										tx_resource.send(m).unwrap();
-
 
 										// Send a message to all users who's access changed in this note change, so they can reload their views
 										if users_access_changed.len() > 0 {
@@ -317,7 +313,6 @@ async fn handle_socket(
 	// };
 }
 
-
 use diff::Result::*;
 fn diff_calc(left: &str, right: &str) -> Vec<String> {
 	let diffs = diff::lines(left, right);
@@ -325,7 +320,7 @@ fn diff_calc(left: &str, right: &str) -> Vec<String> {
 	let out: Vec<String> = diffs.iter().fold(vec![], |mut acc, v| {
 		match *v {
 			Left(_l) => {
-				if acc.last().is_some_and(|v| v.starts_with("D")) {
+				if acc.last().and_then(|v| Some(v.starts_with("D"))) == Some(true) {
 					// Add 1
 					*acc.last_mut().unwrap() = format!("D{}", (&acc.last().unwrap()[1..].parse::<u32>().unwrap() + 1));
 				} else {
@@ -333,7 +328,7 @@ fn diff_calc(left: &str, right: &str) -> Vec<String> {
 				}
 			}
 			Both(_, _) => {
-				if acc.last().is_some_and(|v| v.starts_with("K")) {
+				if acc.last().and_then(|v| Some(v.starts_with("K"))) == Some(true) {
 					// Add 1
 					*acc.last_mut().unwrap() = format!("K{}", (&acc.last().unwrap()[1..].parse::<u32>().unwrap() + 1));
 				} else {

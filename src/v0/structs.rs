@@ -1,9 +1,4 @@
-
-
 use serde::{Deserialize, Serialize};
-
-
-
 
 /**
  * Allows for a unix timestamp (seconds since epoch) until forever

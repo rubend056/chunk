@@ -1,19 +1,18 @@
-use crate::{utils::DbError, v1::*};
-use axum::{
-	extract::{Extension},
-	http::header,
-	response::{IntoResponse},
-	Json,
+use crate::{
+	utils::{get_secs, DbError, SECS_IN_DAY},
+	v1::*,
 };
+use axum::{extract::Extension, http::header, response::IntoResponse, Json};
 use core::convert::TryFrom;
-use hyper::StatusCode;
+use hyper::{Method, StatusCode};
 use lazy_static::lazy_static;
 use pasetors::claims::{Claims, ClaimsValidationRules};
 use pasetors::keys::{AsymmetricKeyPair, Generate};
 use pasetors::token::{TrustedToken, UntrustedToken};
 use pasetors::{public, version4::V4, Public};
 use serde::Serialize;
-
+use std::time::SystemTime;
+use time::{OffsetDateTime, PrimitiveDateTime};
 
 use super::ends::DB;
 
@@ -34,10 +33,16 @@ pub async fn login(
 			let mut claims = Claims::new().unwrap();
 			claims.issuer("chunk.anty.dev").unwrap();
 			claims.add_additional("user", user.clone()).unwrap();
-			claims.non_expiring();
+
+			let exp = get_secs() + SECS_IN_DAY * 7; // 7 days
+			let exp = OffsetDateTime::from_unix_timestamp(exp.try_into().unwrap())
+				.unwrap()
+				.format(&time::format_description::well_known::Rfc3339)
+				.unwrap();
+
+			claims.expiration(&exp).unwrap();
 
 			// Generate the keys and sign the claims.
-
 			let pub_token = public::sign(&KP.secret, &claims, None, Some(b"implicit assertion")).unwrap();
 
 			Ok([(
@@ -91,6 +96,14 @@ pub async fn reset(
 
 use axum::{http::Request, middleware::Next, response::Response};
 
+pub async fn auth_require<B>(req: Request<B>, next: Next<B>) -> Result<Response, impl IntoResponse> {
+	if req.extensions().get::<TrustedToken>().is_none() && *req.method() != Method::GET {
+		Err(DbError::AuthError)
+	} else {
+		Ok(next.run(req).await)
+	}
+}
+
 pub async fn authenticate<B>(mut req: Request<B>, next: Next<B>) -> Result<Response, StatusCode> {
 	let mut user_claims = UserClaims::default();
 
@@ -120,7 +133,7 @@ pub async fn authenticate<B>(mut req: Request<B>, next: Next<B>) -> Result<Respo
 
 	req.extensions_mut().insert(user_claims);
 
-	return Ok(next.run(req).await);
+	Ok(next.run(req).await)
 }
 
 pub async fn user(Extension(_db): Extension<DB>, Extension(user_claims): Extension<UserClaims>) -> impl IntoResponse {
@@ -151,7 +164,6 @@ impl From<&Claims> for UserClaims {
 fn get_valid_token(token: &str) -> Option<(TrustedToken, UserClaims)> {
 	let mut validation_rules = ClaimsValidationRules::new();
 	validation_rules.validate_issuer_with("chunk.anty.dev");
-	validation_rules.allow_non_expiring();
 
 	if let Ok(untrusted_token) = UntrustedToken::<Public, V4>::try_from(token) {
 		if let Ok(trusted_token) = public::verify(
@@ -162,13 +174,9 @@ fn get_valid_token(token: &str) -> Option<(TrustedToken, UserClaims)> {
 			Some(b"implicit assertion"),
 		) {
 			let claims = trusted_token.payload_claims().unwrap().clone();
-			// println!("{:?}", claims.get_claim("data"));
-			// println!("{:?}", claims.get_claim("iat"));
-
 			return Some((trusted_token, UserClaims::from(&claims)));
 		}
 	}
-
 
 	None
 }

@@ -14,6 +14,8 @@ pub fn get_secs() -> u64 {
 		.expect("Before UNIX_EPOCH")
 		.as_secs()
 }
+pub const SECS_IN_HOUR: u64 = 60 * 60;
+pub const SECS_IN_DAY: u64 = SECS_IN_HOUR * 24;
 
 pub fn gen_proquint() -> String {
 	random::<u32>().to_quint()
@@ -21,7 +23,7 @@ pub fn gen_proquint() -> String {
 
 lazy_static! {
 	pub static ref REGEX_TITLE: Regex = Regex::new(env!("REGEX_TITLE")).unwrap();
-	pub static ref REGEX_ACCESS: Regex = Regex::new(format!("(?im){}", env!("REGEX_ACCESS")).as_str() ).unwrap();
+	pub static ref REGEX_ACCESS: Regex = Regex::new(format!("(?im){}", env!("REGEX_ACCESS")).as_str()).unwrap();
 	pub static ref REGEX_USER: Regex = Regex::new(env!("REGEX_USER")).unwrap();
 }
 
@@ -42,12 +44,6 @@ lazy_static! {
 	pub static ref HOST: String =
 		env::var("HOST").unwrap_or(format!("0.0.0.0:{}", env::var("PORT").unwrap_or("4000".into())));
 }
-
-// use std::collections::hash_map::DefaultHasher;
-// use std::hash::{Hash};
-// lazy_static!{
-// 	pub static ref HASHER:DefaultHasher = DefaultHasher::new();
-// }
 
 #[derive(Debug, PartialEq, Serialize, Eq)]
 pub enum DbError {

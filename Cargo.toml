@@ -29,4 +29,8 @@ pasetors = "0.6.3"
 diff = "0.1.13"
 tokio-util = "0.7.4"
 infer = "0.11.0"
+image = {version= "0.24.5", features = ["avif"]}
+time = "0.3.17"
 
+[profile.dev.package."*"]
+opt-level = 3

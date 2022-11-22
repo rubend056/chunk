@@ -1,5 +1,7 @@
 from archlinux
 
+run pacman -Sy --noconfirm openssl
+
 workdir /server
 
 copy ./dist ./

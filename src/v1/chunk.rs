@@ -134,7 +134,6 @@ impl ChunkMeta {
 			value = format!("{value}\n{}", format!("Access: {}", v));
 		}
 
-
 		value
 	}
 }

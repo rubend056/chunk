@@ -16,9 +16,9 @@
 		Querying this with different views
 
 */
-use std::{collections::{HashMap, HashSet}};
+use std::collections::{HashMap, HashSet};
 
-use log::{error};
+use log::error;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -67,38 +67,37 @@ type UsersToNotify = HashSet<String>;
 
 #[derive(Default, Debug, Serialize)]
 pub struct DB {
-	// _chunks: Vec<>,
 	chunks: HashMap<String, ChunkAndMeta>,
 	users: HashMap<String, User>,
-	
+
 	// For faster ref->id lookups, that means we need to update this on create/remove/modify
 	ref_id: HashMap<String, Vec<String>>,
 }
 impl From<DBData> for DB {
 	fn from(value: DBData) -> Self {
 		let chunks = value
-		.chunks
-		.into_iter()
-		.map(|chunk| (chunk.id.clone(), (chunk.clone(), ChunkMeta::from(&chunk.value))))
-		.collect::<HashMap<String, ChunkAndMeta>>();
+			.chunks
+			.into_iter()
+			.map(|chunk| (chunk.id.clone(), (chunk.clone(), ChunkMeta::from(&chunk.value))))
+			.collect::<HashMap<String, ChunkAndMeta>>();
 		// Ref->id on conversion
 		let mut ref_id = HashMap::<String, Vec<String>>::default();
-		chunks.iter().for_each(|(id,(_,meta))| {
-			ref_id.entry(meta._ref.to_owned())
-			.and_modify(|v| v.push(id.to_owned()))
-			.or_insert(vec!(id.to_owned()));
+		chunks.iter().for_each(|(id, (_, meta))| {
+			ref_id
+				.entry(meta._ref.to_owned())
+				.and_modify(|v| v.push(id.to_owned()))
+				.or_insert(vec![id.to_owned()]);
 		});
-		
+
 		DB {
 			chunks,
 			users: value.users.into_iter().map(|user| (user.user.clone(), user)).collect(),
-			ref_id
+			ref_id,
 		}
 	}
 }
 
 impl DB {
-	
 	pub fn new_user(&mut self, user: String, pass: String) -> Result<(), DbError> {
 		if self.users.get(&user).is_some() {
 			return Err(DbError::UserTaken);
@@ -111,14 +110,14 @@ impl DB {
 		}
 
 		self.users.insert(user.clone(), user_instance);
-		
+
 		{
 			// New user setup
-			if let Ok(chunk) = self.get_chunk(Some("rubend".into()), &"tutorial".into()){
+			if let Ok(chunk) = self.get_chunk(Some("rubend".into()), &"tutorial".into()) {
 				self.set_chunk(&user, (None, chunk.value))?;
 			}
 		}
-		
+
 		Ok(())
 	}
 	// pub fn remove_user(&mut self, user: String, _pass: String) -> Result<(), DbError> {
@@ -129,8 +128,7 @@ impl DB {
 	// 	}else {
 	// 		return Err(DbError::AuthError);
 	// 	}
-		
-		
+
 	// 	// ! NOT IMPLEMENTED
 	// 	// self.users.insert(user.clone(), user_instance);
 	// 	// {
@@ -139,7 +137,7 @@ impl DB {
 	// 	// 		self.set_chunk(&user, (None, chunk.value))?;
 	// 	// 	}
 	// 	// }
-		
+
 	// 	Ok(())
 	// }
 	pub fn login(&self, user: &str, pass: &str) -> Result<(), DbError> {
@@ -155,31 +153,38 @@ impl DB {
 		user.reset_pass(&old_pass, &pass)
 	}
 
-	fn iter_tree(&self, ua: &UserAccess, root: Option<(&Chunk, &ChunkMeta)>, depth: u32) -> Vec<ChunkTree> {
+	fn iter_tree(&self, user_access: &UserAccess, root: Option<(&Chunk, &ChunkMeta)>, depth: u32) -> Vec<ChunkTree> {
 		self
 			.chunks
 			.iter()
 			.filter(|(_, (chunk, meta))| {
-				(meta.access.contains(ua) || chunk.owner == ua.0)
-					&& match root {
+					// Does this user have access?
+					(meta.access.contains(user_access) || chunk.owner == user_access.0)
+					// Are you my child?
+					&& {
+						// Replaces none user for chunk owner
+						let _refs = meta._refs.iter().map(|v| (v.0.clone().or(Some(chunk.owner.clone())),v.1.clone())).collect::<HashSet<_>>();
+						match root {
 						Some((chunk_root, meta_root)) => {
 							meta
 								._refs
 								// Check if any chunk is referencing our owner & reference
 								.contains(&(Some(chunk_root.owner.clone()), meta_root._ref.clone()))
 								// Or, if the chunk's owners are the same, also check if any refs without owner point to root's
-								|| ( chunk_root.owner == chunk.owner && meta._refs.contains(&(None, meta_root._ref.clone()))) 
+								|| ( chunk_root.owner == chunk.owner && meta._refs.contains(&(None, meta_root._ref.clone())))
 								// Or, if it contains our id
 								|| meta._refs.contains(&(None, chunk_root.id.clone()))
 						}
-						None => meta._refs.is_empty(),
-					}
+						None => meta._refs.is_empty()
+						// Return if all this chunk points to is stuff this user can't read
+						|| _refs.iter().all(|v| self.ref_id.get(&v.1).and_then(|v| Some(v.iter().all(|id| {let (c,m) = &self.chunks[id];c.owner != chunk.owner && !m.access.contains(user_access)}))).or(Some(false)).unwrap()),
+					}}
 			})
 			.map(|(_, (chunk, meta))| {
 				ChunkTree(
 					chunk.clone(),
 					if depth > 0 {
-						Some(self.iter_tree(ua, Some((chunk, meta)), depth - 1))
+						Some(self.iter_tree(user_access, Some((chunk, meta)), depth - 1))
 					} else {
 						None
 					},
@@ -249,7 +254,6 @@ impl DB {
 		Ok(self._get_chunk(user, id_or_ref)?.0)
 	}
 
-
 	pub fn set_chunk(
 		&mut self,
 		user: &str,
@@ -265,7 +269,6 @@ impl DB {
 				// Modifying
 				match self.chunks.get_mut(&id) {
 					Some((chunk, meta)) => {
-						
 						// Make sure user can do what he wants
 						if chunk.owner == user {
 							// If user is the owner, then allow the change
@@ -280,7 +283,7 @@ impl DB {
 								return Err(DbError::AuthError);
 							}
 						}
-						
+
 						// Modify chunk
 						let mut users = HashSet::default();
 						users.insert(chunk.owner.clone());
@@ -291,25 +294,29 @@ impl DB {
 							.symmetric_difference(&meta.access)
 							.map(|(u, _)| u.clone())
 							.collect::<HashSet<_>>();
-						
+
 						// Modify _ref->id
-						if meta._ref != meta_new._ref{
+						if meta._ref != meta_new._ref {
 							let mut d = false;
 							{
 								self.ref_id.entry(meta._ref.clone()).and_modify(|v| {
-									v.retain(|v| v!=&chunk.id);
-									if v.is_empty() {d=true;}
+									v.retain(|v| v != &chunk.id);
+									if v.is_empty() {
+										d = true;
+									}
 								});
-								self.ref_id.entry(meta_new._ref.clone())
+								self
+									.ref_id
+									.entry(meta_new._ref.clone())
 									.and_modify(|v| v.push(chunk.id.to_owned()))
-									.or_insert(vec!(chunk.id.to_owned()));
-							}	
+									.or_insert(vec![chunk.id.to_owned()]);
+							}
 						}
-						
+
 						chunk.modified = get_secs();
 						chunk.value = value;
 						*meta = meta_new.clone();
-						
+
 						Ok((chunk.clone(), users, users_access_changed))
 					}
 					None => {
@@ -336,13 +343,14 @@ impl DB {
 						.map(|(u, _)| u.clone())
 						.chain([chunk.owner.clone()].into_iter()),
 				);
-				
+
 				// Modify _ref->id
-				self.ref_id.entry(meta_new._ref.clone())
-									.and_modify(|v| v.push(chunk.id.to_owned()))
-									.or_insert(vec!(chunk.id.to_owned()));
-				
-				
+				self
+					.ref_id
+					.entry(meta_new._ref.clone())
+					.and_modify(|v| v.push(chunk.id.to_owned()))
+					.or_insert(vec![chunk.id.to_owned()]);
+
 				self.chunks.insert(id, (chunk.clone(), meta_new));
 
 				// Respond
@@ -378,22 +386,19 @@ impl DB {
 					chunks_changed.push((chunk.clone(), meta.clone()));
 				} else {
 					should_remove = true;
-					
+
 					// Modify _ref->id
 					self.ref_id.remove(&meta._ref);
 				}
 			}
 			if should_remove {
 				self.chunks.remove(&id);
-				
-				
 			}
 		}
 
 		Ok(chunks_changed)
 	}
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -441,7 +446,6 @@ mod tests {
 		assert!(db.set_chunk("nina", (None, "#nack".into())).is_err());
 		assert!(db.set_chunk("nina", (None, "access: nomad read".into())).is_err());
 
-
 		let nina_chores = db.get_chunk(Some("nina".into()), &"Chores".into()).unwrap();
 		let john_work_stuff = db.get_chunk(Some("john".into()), &"Work Stuff".into()).unwrap();
 
@@ -463,7 +467,6 @@ mod tests {
 				(Some(nina_chores.id.clone()), "# Chores -> Todo\n - Vaccum".into())
 			)
 			.is_err());
-
 
 		assert!(
 			db.set_chunk(

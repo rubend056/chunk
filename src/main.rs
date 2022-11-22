@@ -1,7 +1,8 @@
-#![feature(is_some_and)]
-#![feature(map_many_mut)]
+// #![feature(is_some_and)]
+// #![feature(map_many_mut)]
 
 use axum::{
+	extract::DefaultBodyLimit,
 	routing::{get, post},
 	Extension, Router,
 };
@@ -10,6 +11,7 @@ use futures::future::join;
 use log::{error, info};
 use serde::{Deserialize, Serialize};
 use std::{
+	collections::HashMap,
 	env, fs,
 	net::SocketAddr,
 	path::Path,
@@ -22,15 +24,18 @@ use tokio::{
 	sync::{broadcast, watch},
 	time,
 };
-use tower_http::trace::TraceLayer;
-use utils::{get_secs, CACHE_PATH, DB_BACKUP_FOLDER};
+use tower_http::{timeout::TimeoutLayer, trace::TraceLayer};
+use utils::{get_secs, CACHE_PATH, DB_BACKUP_FOLDER, SECS_IN_DAY};
 use v1::{db::DBData, socket::websocket_handler};
 
 mod utils;
 mod v0;
 mod v1;
 
-use crate::v1::{auth, ends::*};
+use crate::{
+	utils::SECS_IN_HOUR,
+	v1::{auth, ends::*},
+};
 use crate::{
 	utils::{HOST, WEB_DIST},
 	v1::socket::ResourceMessage,
@@ -50,7 +55,6 @@ async fn main() {
 	let (shutdown_tx, mut shutdown_rx) = watch::channel(());
 	let (resource_tx, _resource_rx) = broadcast::channel::<ResourceMessage>(16);
 
-
 	// Build router
 	let app = Router::new()
 		.nest(
@@ -65,6 +69,7 @@ async fn main() {
 				.route("/media", post(media_post))
 				.route("/media/:id", get(media_get))
 				// User authentication, provider of UserClaims
+				.route_layer(axum::middleware::from_fn(auth::auth_require))
 				.route_layer(axum::middleware::from_fn(auth::authenticate))
 				.route("/login", post(auth::login))
 				.route("/reset", post(auth::reset))
@@ -74,18 +79,17 @@ async fn main() {
 		.merge(SpaRouter::new("/web", WEB_DIST.clone()))
 		.layer(
 			tower::ServiceBuilder::new()
+				.layer(DefaultBodyLimit::disable())
 				.layer(TraceLayer::new_for_http())
-				// .layer(CorsLayer::permissive())
+				.layer(TimeoutLayer::new(Duration::from_secs(30)))
 				.layer(Extension(db.clone()))
+				.layer(Extension(cache.clone()))
 				.layer(Extension(shutdown_rx.clone()))
 				.layer(Extension(resource_tx.clone())),
 		);
 
-
 	// Backup service
 	let backup = tokio::spawn(backup_service(cache.clone(), db.clone(), shutdown_rx.clone()));
-	// Shutdown listener
-	// tokio::spawn(shutdown_service(down_tx));
 
 	// Create Socket to listen on
 	let addr = SocketAddr::from_str(&HOST).unwrap();
@@ -104,7 +108,6 @@ async fn main() {
 
 	let server = tokio::spawn(server);
 
-
 	// Listen to iterrupt or terminate signal to order a shutdown if either is triggered
 	let mut s0 = signal(SignalKind::interrupt()).unwrap();
 	let mut s1 = signal(SignalKind::terminate()).unwrap();
@@ -117,13 +120,13 @@ async fn main() {
 		}
 	}
 
+	info!("Telling everyone to shutdown.");
 	shutdown_tx.send(()).unwrap();
-	info!("Told everyone to shutdown.");
 
 	info!("Waiting for everyone to shutdown.");
 	let (_server_r, _backup_r) = join(server, backup).await;
-	info!("Everyone has shutdown, will give sockets 25ms time to wrap up.");
-	time::sleep(Duration::from_millis(25)).await;
+
+	info!("Joined workers, apparently they've shutdown");
 
 	let _db = db.clone();
 	if let Ok(db) = Arc::try_unwrap(db) {
@@ -137,7 +140,6 @@ async fn main() {
 	deinit_cache(&cache.read().unwrap());
 }
 
-
 fn log_env() {
 	let j = env::vars()
 		.filter(|(k, _)| k.contains("REGEX_") || k.contains("DB_") || k == "HOST" || k == "WEB_DIST")
@@ -146,10 +148,21 @@ fn log_env() {
 	info!("{j:?}");
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub enum MediaEntry {
+	Ref(String), // Means entry hash maps to another hash, meaning conversion yielded a different hash
+	Entry {
+		user: String,
+		#[serde(with = "v1::ends::MatcherType", rename = "type")]
+		_type: infer::MatcherType,
+	},
+}
+
 #[derive(Serialize, Deserialize, Default, Debug)]
 #[serde(default)]
-struct Cache {
+pub struct Cache {
 	pub last_backup: u64,
+	pub media: HashMap<String, MediaEntry>,
 }
 fn init_cache() -> Cache {
 	fs::read(CACHE_PATH.clone())
@@ -163,16 +176,12 @@ fn deinit_cache(cache: &Cache) {
 	}
 }
 
-
 async fn backup_service(cache: Arc<RwLock<Cache>>, db: DB, mut shutdown_rx: watch::Receiver<()>) {
 	let backup_folder = Path::new(DB_BACKUP_FOLDER.as_str());
 	if !backup_folder.is_dir() {
 		fs::create_dir(backup_folder).unwrap();
 		info!("Created {backup_folder:?}.");
 	}
-
-	let sec_to_hrs: u64 = 60 * 60;
-	let sec_to_days: u64 = sec_to_hrs * 24;
 
 	loop {
 		let wait =
@@ -181,8 +190,7 @@ async fn backup_service(cache: Arc<RwLock<Cache>>, db: DB, mut shutdown_rx: watc
 			// Minus seconds now
 			- get_secs() as i128
 			// Plus 2 days
-			+ (sec_to_days as i128 * 2);
-
+			+ (SECS_IN_DAY as i128 * 2);
 
 		if wait <= 0 {
 			let secs = get_secs();
@@ -190,7 +198,7 @@ async fn backup_service(cache: Arc<RwLock<Cache>>, db: DB, mut shutdown_rx: watc
 
 			let backup_file = backup_folder.join(format!(
 				"{}.json",
-				(secs / sec_to_days) - (365 * 51) /*Closest number to days since EPOCH to lower that to something more readable */
+				(secs / SECS_IN_DAY) - (365 * 51) /*Closest number to days since EPOCH to lower that to something more readable */
 			));
 			let dbdata = serde_json::to_string(&DBData::new(&db.read().unwrap())).unwrap();
 
@@ -200,7 +208,7 @@ async fn backup_service(cache: Arc<RwLock<Cache>>, db: DB, mut shutdown_rx: watc
 				info!("Backed up to {backup_file:?}.");
 			}
 		} else {
-			info!("Waiting {}h till next backup", wait / sec_to_hrs as i128);
+			info!("Waiting {}h till next backup", wait / SECS_IN_HOUR as i128);
 			tokio::select! {
 				_ = time::sleep(Duration::from_secs(wait as u64)) => {
 					continue;
