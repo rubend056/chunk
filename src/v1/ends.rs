@@ -240,18 +240,21 @@ pub async fn media_post(
 	let mut create = false;
 	{
 		let cache = cache.read().unwrap();
-		if let Some(cache_item) = cache.media.get(&id) {
-			let mut cache_item = cache_item.clone();
+		if let Some(media_item) = cache.media.get(&id) {
+			// let mut cache_item = cache_item.clone();
 			// If we have a reference to a new conversion, make that the current id
-			if let MediaEntry::Ref(id_cache) = cache_item {
-				id = id_cache.clone();
-				cache_item = cache.media[&id].clone();
-			}
-			
-			if let MediaEntry::Entry { user, _type } = cache_item {
-				matcher_type = _type;
-			} else {
-				error!("Media entry isn't Entry for {}? that's weird", id);
+			if let MediaEntry::Ref(id_cache) = media_item {
+				if let Some(media_item) = cache.media.get(id_cache) {
+					id = id_cache.clone();
+					
+					if let MediaEntry::Entry { user:_, _type } = media_item {
+						matcher_type = *_type;
+					} else {
+						error!("Media entry isn't Entry for {}? was referenced by {} that's weird", id, id_cache);
+					}
+				} else {
+					create = true;
+				}
 			}
 		} else {
 			create = true
@@ -261,15 +264,15 @@ pub async fn media_post(
 	if create {
 		if let Some(_type) = _type {
 			match _type.matcher_type() {
-				infer::MatcherType::Image => {
-					if let Ok(img) = image::load_from_memory(&body) {
-						let mut _body = BufWriter::new(Cursor::new(vec![]));
-						info!("Converting image w:{},h:{} to .avif", img.width(), img.height());
-						img.write_to(&mut _body, image::ImageOutputFormat::Avif).unwrap();
-						info!("Finished conversion of w:{},h:{}", img.width(), img.height());
-						body = _body.into_inner().unwrap().into_inner().into();
-					}
-				}
+				// infer::MatcherType::Image => {
+				// 	if let Ok(img) = image::load_from_memory(&body) {
+				// 		let mut _body = BufWriter::new(Cursor::new(vec![]));
+				// 		info!("Converting image w:{},h:{} to .avif", img.width(), img.height());
+				// 		img.write_to(&mut _body, image::ImageOutputFormat::Avif).unwrap();
+				// 		info!("Finished conversion of w:{},h:{}", img.width(), img.height());
+				// 		body = _body.into_inner().unwrap().into_inner().into();
+				// 	}
+				// }
 				_ => {}
 			}
 		}
