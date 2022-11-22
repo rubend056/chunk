@@ -215,6 +215,8 @@ impl DB {
 		}
 	}
 	pub fn get_notes(&self, user: &str) -> Vec<ChunkView> {
+		
+
 		let access = (user.to_owned(), Access::Read);
 		self.chunks.iter().fold(vec![], |mut acc, (_, (chunk, meta))| {
 			if chunk.owner == *user {
@@ -238,12 +240,14 @@ impl DB {
 
 		if let Some((chunk, meta)) = self.chunks.get(&id_or_ref).or_else(|| {
 			self
-				.chunks
-				.iter()
-				.find(|(_, (_, meta))| meta._ref == id_or_ref)
-				.map(|v| v.1)
+				.ref_id
+				.get(&id_or_ref)
+				.and_then(|ids| ids.iter().find_map(|id| self.chunks.get(id)))
 		}) {
-			if chunk.owner == user || meta.access.contains(&(user, Access::Read)) {
+			if chunk.owner == user
+				|| meta.access.contains(&(user, Access::Read))
+				|| meta.access.contains(&("public".into(), Access::Read))
+			{
 				return Ok((chunk.clone(), meta.clone()));
 			}
 		}

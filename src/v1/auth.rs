@@ -96,7 +96,15 @@ pub async fn reset(
 
 use axum::{http::Request, middleware::Next, response::Response};
 
-pub async fn auth_require<B>(req: Request<B>, next: Next<B>) -> Result<Response, impl IntoResponse> {
+pub async fn auth_required<B>(req: Request<B>, next: Next<B>) -> Result<Response, impl IntoResponse> {
+	if req.extensions().get::<TrustedToken>().is_none() {
+		Err(DbError::AuthError)
+	} else {
+		Ok(next.run(req).await)
+	}
+}
+
+pub async fn public_only_get<B>(req: Request<B>, next: Next<B>) -> Result<Response, impl IntoResponse> {
 	if req.extensions().get::<TrustedToken>().is_none() && *req.method() != Method::GET {
 		Err(DbError::AuthError)
 	} else {

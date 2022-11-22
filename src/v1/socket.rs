@@ -103,14 +103,21 @@ async fn handle_socket(
 	let (mut tx_socket, mut rx_socket) = socket.split();
 
 	let get_notes_ids = || {
+		if user == "public" {
+			return "[]".into();
+		}
+		
 		let mut chunks = db.read().unwrap().get_notes(user);
 		chunks.sort_by_key(|(chunk, _)| -(chunk.modified as i128));
 		let chunks = chunks.iter().map(|v| v.0.id.clone()).collect::<Vec<_>>();
 		serde_json::to_string(&chunks).unwrap()
 	};
-	// let get_chunk =
-	// 	|id| ;
+
 	let get_well_ids = |root| {
+		if user == "public" {
+			return "[[],null]".into();
+		}
+
 		let mut chunks = db.read().unwrap().get_chunks(user.to_owned(), root, None).unwrap();
 		chunks.0.sort_by_key(|t| -(t.0.modified as i128));
 		let chunks = (chunks.0.iter().map(|v| v.0.id.clone()).collect::<Vec<_>>(), chunks.1);

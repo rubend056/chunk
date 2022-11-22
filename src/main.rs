@@ -61,15 +61,16 @@ async fn main() {
 			"/api",
 			Router::new()
 				.route("/chunks", get(chunks_get).put(chunks_put).delete(chunks_del))
-				.route("/chunks/:id", get(chunks_get_id))
 				.route("/well", get(well_get))
 				.route("/well/:id", get(well_get))
+				.route_layer(axum::middleware::from_fn(auth::auth_required))
+				.route("/chunks/:id", get(chunks_get_id))
 				.route("/stream", get(websocket_handler))
 				.route("/user", get(auth::user))
 				.route("/media", post(media_post))
 				.route("/media/:id", get(media_get))
+				.route_layer(axum::middleware::from_fn(auth::public_only_get))
 				// User authentication, provider of UserClaims
-				.route_layer(axum::middleware::from_fn(auth::auth_require))
 				.route_layer(axum::middleware::from_fn(auth::authenticate))
 				.route("/login", post(auth::login))
 				.route("/reset", post(auth::reset))
@@ -79,8 +80,8 @@ async fn main() {
 		.merge(SpaRouter::new("/web", WEB_DIST.clone()))
 		.layer(
 			tower::ServiceBuilder::new()
-				.layer(DefaultBodyLimit::disable())
 				.layer(TraceLayer::new_for_http())
+				.layer(DefaultBodyLimit::disable())
 				.layer(TimeoutLayer::new(Duration::from_secs(30)))
 				.layer(Extension(db.clone()))
 				.layer(Extension(cache.clone()))
