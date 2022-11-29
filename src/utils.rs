@@ -27,20 +27,22 @@ lazy_static! {
 	pub static ref REGEX_USER: Regex = Regex::new(env!("REGEX_USER")).unwrap();
 }
 
-#[derive(Debug, Default)]
-pub struct Env {
-	pub db_path: Option<String>,
-	pub db_init: Option<String>,
-	pub web_dist: String,
-	pub host: String,
-}
+// #[derive(Debug, Default)]
+// pub struct Env {
+// 	pub db_path: Option<String>,
+// 	pub db_init: Option<String>,
+// 	pub web_dist: String,
+// 	pub host: String,
+// }
 lazy_static! {
 	pub static ref DB_PATH: Option<String> = env::var("DB_PATH").ok();
 	pub static ref DB_INIT: Option<String> = env::var("DB_INIT").ok();
 	pub static ref DB_BACKUP_FOLDER: String = env::var("DB_BACKUP_FOLDER").unwrap_or("backups".into());
 	pub static ref MEDIA_FOLDER: String = env::var("MEDIA_FOLDER").unwrap_or("media".into());
 	pub static ref CACHE_PATH: String = env::var("CACHE_PATH").unwrap_or("cache.json".into());
-	pub static ref WEB_DIST: String = env::var("WEB_DIST").unwrap_or("web".into());
+	pub static ref WEB_DIST: String = env::var("WEB_DIST").unwrap_or("web/default".into());
+	pub static ref PAGE_DIST: String = env::var("PAGE_DIST").unwrap_or("web/page".into());
+	pub static ref BACKEND_DIST: String = env::var("BACKEND_DIST").unwrap_or("backend".into());
 	pub static ref HOST: String =
 		env::var("HOST").unwrap_or(format!("0.0.0.0:{}", env::var("PORT").unwrap_or("4000".into())));
 }
