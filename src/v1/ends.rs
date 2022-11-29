@@ -246,11 +246,14 @@ pub async fn media_post(
 			if let MediaEntry::Ref(id_cache) = media_item {
 				if let Some(media_item) = cache.media.get(id_cache) {
 					id = id_cache.clone();
-					
-					if let MediaEntry::Entry { user:_, _type } = media_item {
+
+					if let MediaEntry::Entry { user: _, _type } = media_item {
 						matcher_type = *_type;
 					} else {
-						error!("Media entry isn't Entry for {}? was referenced by {} that's weird", id, id_cache);
+						error!(
+							"Media entry isn't Entry for {}? was referenced by {} that's weird",
+							id, id_cache
+						);
 					}
 				} else {
 					create = true;

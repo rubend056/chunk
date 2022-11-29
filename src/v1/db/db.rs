@@ -1,78 +1,17 @@
-/** Designing a new Data Structure that would allow for all queries/insertions/serializations to efficiently happen */
-
-/**
- - Different visualization options
- - Editing
-	 - ![](web/src/assets/icons/card-text.svg) **Shank/Edit** -> selected chunk + children up to 4N (1N default) an editor
- - Viewing
-	 - ![](web/src/assets/icons/clipboard.svg) **Notes** -> chunks ordered by recent side by side
-	 - ![](web/src/assets/icons/grid.svg) **Well** -> selected chunk children on a grid
-	 - ![](web/src/assets/icons/diagram-2-fill.svg) **Graph** -> nodes in a tree
-				 (S)	-> (R r)
-				(S) -> ()
-
-				(R) -> (S w) ->
-								\> (S r)
-		Querying this with different views
-
-*/
 use std::collections::{HashMap, HashSet};
 
 use log::error;
-use serde::{Deserialize, Serialize};
 
 use crate::{
 	utils::{gen_proquint, get_secs, DbError},
 	v1::{
-		chunk::{Chunk, ChunkMeta},
+		chunk::{standardize, Access, Chunk, ChunkMeta, UserAccess},
 		user::User,
 	},
 };
 
-use super::chunk::{standardize, Access, UserAccess};
+use super::{ChunkAndMeta, ChunkTree, ChunkType, ChunkView, DBData, UsersToNotify, DB};
 
-#[derive(Serialize, Deserialize)]
-pub struct DBData {
-	pub chunks: Vec<Chunk>, // proquint (id) -> Chunk
-	pub users: Vec<User>,   // user -> User
-}
-impl From<DB> for DBData {
-	fn from(value: DB) -> Self {
-		DBData {
-			chunks: value.chunks.into_iter().map(|c| c.1 .0).collect(),
-			users: value.users.into_iter().map(|c| c.1).collect(),
-		}
-	}
-}
-impl DBData {
-	pub fn new(value: &DB) -> Self {
-		DBData {
-			chunks: value.chunks.iter().map(|c| c.1 .0.clone()).collect(),
-			users: value.users.iter().map(|c| c.1.clone()).collect(),
-		}
-	}
-}
-
-#[derive(Serialize)]
-pub enum ChunkType {
-	Owner,
-	Access(Access),
-}
-pub type ChunkView = (Chunk, ChunkType);
-#[derive(Serialize)]
-pub struct ChunkTree(pub Chunk, pub Option<Vec<ChunkTree>>);
-
-type ChunkAndMeta = (Chunk, ChunkMeta);
-type UsersToNotify = HashSet<String>;
-
-#[derive(Default, Debug, Serialize)]
-pub struct DB {
-	chunks: HashMap<String, ChunkAndMeta>,
-	users: HashMap<String, User>,
-
-	// For faster ref->id lookups, that means we need to update this on create/remove/modify
-	ref_id: HashMap<String, Vec<String>>,
-}
 impl From<DBData> for DB {
 	fn from(value: DBData) -> Self {
 		let chunks = value
@@ -402,126 +341,4 @@ impl DB {
 
 		Ok(chunks_changed)
 	}
-}
-
-#[cfg(test)]
-mod tests {
-	use super::*;
-	// use log::{info};
-	fn init() -> DB {
-		let mut db = DB::default();
-		assert!(db.new_user("nina".into(), "4444".into()).is_ok());
-		assert!(db.new_user("john".into(), "3333".into()).is_ok());
-
-		assert!(db.set_chunk("nina", (None, "# Todo".into())).is_ok());
-		assert!(db
-			.set_chunk("nina", (None, "# Chores -> Todo\n - Vaccum\naccess: john r".into()))
-			.is_ok());
-
-		assert!(db.set_chunk("john", (None, "# Todo".into())).is_ok());
-		assert!(db.set_chunk("john", (None, "# Groceries -> todo".into())).is_ok());
-		assert!(db
-			.set_chunk("john", (None, "# Work Stuff -> todo\nshare: nina write".into()))
-			.is_ok());
-
-		db
-	}
-	#[test]
-	fn users() {
-		let mut db = DB::default();
-		assert_eq!(db.new_user("Nana3".into(), "1234".into()), Err(DbError::InvalidUser));
-		assert_eq!(db.new_user("Nana&".into(), "1234".into()), Err(DbError::InvalidUser));
-		assert_eq!(db.new_user(":nana".into(), "1234".into()), Err(DbError::InvalidUser));
-		assert!(db.new_user("nina".into(), "nina's pass".into()).is_ok());
-
-		assert_eq!(db.users.len(), 1);
-
-		assert!(db.login("nina", "wrong_pass").is_err());
-		assert!(db.login("nana", "wrong_pass").is_err());
-		assert!(db.login("nina", "nina's pass").is_ok());
-	}
-
-	#[test]
-	fn chunks() {
-		let mut db = init();
-		// Checking chunk validation
-		assert!(db.set_chunk("nina", (None, "4444".into())).is_err());
-		assert!(db.set_chunk("nina", (None, "# -> jack".into())).is_err());
-		assert!(db.set_chunk("nina", (None, "#nack".into())).is_err());
-		assert!(db.set_chunk("nina", (None, "access: nomad read".into())).is_err());
-
-		let nina_chores = db.get_chunk(Some("nina".into()), &"Chores".into()).unwrap();
-		let john_work_stuff = db.get_chunk(Some("john".into()), &"Work Stuff".into()).unwrap();
-
-		assert_eq!(db.get_notes("nina").len(), 3);
-		assert_eq!(db.get_notes("john").len(), 4);
-
-		assert!(db
-			.set_chunk(
-				"john",
-				(
-					Some(nina_chores.id.clone()),
-					"# Chores -> Todo\n - Vaccum\naccess: john r".into()
-				)
-			)
-			.is_err());
-		assert!(db
-			.set_chunk(
-				"john",
-				(Some(nina_chores.id.clone()), "# Chores -> Todo\n - Vaccum".into())
-			)
-			.is_err());
-
-		assert!(
-			db.set_chunk(
-				"nina",
-				(
-					Some(john_work_stuff.id.clone()),
-					"# Work Stu -> todo\nshare: nina write".into()
-				)
-			)
-			.is_err(),
-			"Nina has write access but can't change title, title is checked by _ref/title props in ChunkMeta"
-		);
-		let r = db.set_chunk(
-			"nina",
-			(
-				Some(john_work_stuff.id.clone()),
-				"# work stuff -> Todo\nshare: nina w".into(),
-			),
-		);
-		assert!(r.is_err(), "Title Changed, write should fail'{r:?}'");
-		let r = db.set_chunk(
-			"nina",
-			(
-				Some(john_work_stuff.id.clone()),
-				"# Work Stuff -> Todo\nshare: nina r".into(),
-			),
-		);
-		assert!(r.is_err(), "Can't change access, fails'{r:?}'");
-		let r = db.set_chunk(
-			"nina",
-			(
-				Some(john_work_stuff.id.clone()),
-				"# Work Stuff -> Todo\nCan change content :)\nshare: nina w".into(),
-			),
-		);
-		assert!(
-			r.is_ok(),
-			"Can change content since nina has write access, succeeds'{r:?}'"
-		);
-	}
-	#[test]
-	fn views() {
-		// let db = init();
-	}
-	#[test]
-	fn delete() {
-		let mut db = init();
-
-		let john_work_stuff = db.get_chunk(Some("john".into()), &"Work Stuff".into()).unwrap();
-		assert!(db.del_chunk(&"nina".into(), vec![john_work_stuff.id.clone()]).is_err());
-	}
-	#[test]
-	fn access() {}
 }

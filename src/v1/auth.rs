@@ -11,8 +11,7 @@ use pasetors::keys::{AsymmetricKeyPair, Generate};
 use pasetors::token::{TrustedToken, UntrustedToken};
 use pasetors::{public, version4::V4, Public};
 use serde::Serialize;
-use std::time::SystemTime;
-use time::{OffsetDateTime, PrimitiveDateTime};
+use time::OffsetDateTime;
 
 use super::ends::DB;
 

@@ -31,6 +31,8 @@ tokio-util = "0.7.4"
 infer = "0.11.0"
 image = {version= "0.24.5", features = ["avif"]}
 time = "0.3.17"
+quick-js = "0.4.1"
+deno_core = "0.161.0"
 
 [profile.dev.package."*"]
 opt-level = 3

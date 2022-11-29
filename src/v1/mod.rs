@@ -12,7 +12,8 @@ pub mod auth;
 pub mod chunk;
 pub mod db;
 pub mod ends;
-pub mod js;
+pub mod js_deno;
+pub mod js_quick;
 pub mod socket;
 pub mod user;
 
@@ -73,14 +74,14 @@ pub async fn save(db: &DB) {
 	}
 }
 
-#[cfg(test)]
-mod tests {
+// #[cfg(test)]
+// mod tests {
 
-	#[test]
-	fn d() {
-		// let db = init().await;
-		// let c = db.get_chunk(Some("rubend".into()), &"tutorial".into());
-		// println!("{c:?}");
-		// assert!()
-	}
-}
+// 	#[test]
+// 	fn d() {
+// 		// let db = init().await;
+// 		// let c = db.get_chunk(Some("rubend".into()), &"tutorial".into());
+// 		// println!("{c:?}");
+// 		// assert!()
+// 	}
+// }
