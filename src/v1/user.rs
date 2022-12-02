@@ -6,7 +6,7 @@ use argon2::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::utils::{DbError, REGEX_USER};
+use crate::utils::{DbError, REGEX_USERNAME};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct User {
@@ -16,8 +16,8 @@ pub struct User {
 
 impl User {
 	pub fn new(user: String, pass: String) -> Result<Self, DbError> {
-		if !REGEX_USER.is_match(user.as_str()) {
-			return Err(DbError::InvalidUser);
+		if !REGEX_USERNAME.is_match(user.as_str()) {
+			return Err(DbError::InvalidUsername);
 		}
 
 		let salt = SaltString::generate(&mut OsRng);

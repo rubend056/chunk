@@ -30,7 +30,7 @@ export def build [] {
 	exit
 
 	# Copy webapp to output
-	cp -r web/dist/* container/dist/web/
+	cp -r web/dist/* container/dist/
 	cp -r web/public/* container/dist/web/
 	rm -f container/dist/web/*.map
 }

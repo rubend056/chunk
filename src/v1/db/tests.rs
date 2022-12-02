@@ -20,19 +20,48 @@ fn init() -> DB {
 
 	db
 }
+use rand::distributions::{Alphanumeric, DistString};
+
 #[test]
 fn users() {
 	let mut db = DB::default();
-	assert_eq!(db.new_user("Nana3".into(), "1234".into()), Err(DbError::InvalidUser));
-	assert_eq!(db.new_user("Nana&".into(), "1234".into()), Err(DbError::InvalidUser));
-	assert_eq!(db.new_user(":nana".into(), "1234".into()), Err(DbError::InvalidUser));
+	assert_eq!(
+		db.new_user("Nana3".into(), "1234".into()),
+		Err(DbError::InvalidUsername),
+		"Username characters invalid, only lowercase"
+	);
+	assert_eq!(
+		db.new_user("Nana&".into(), "1234".into()),
+		Err(DbError::InvalidUsername),
+		"Username characters invalid, no special"
+	);
+	assert_eq!(
+		db.new_user(":nana".into(), "1234".into()),
+		Err(DbError::InvalidUsername),
+		"Username characters invalid, no special"
+	);
+	assert_eq!(
+		db.new_user("na".into(), "1234".into()),
+		Err(DbError::InvalidUsername),
+		"Username >= 3 in size"
+	);
+	assert_eq!(
+		db.new_user("nan".into(), "12".into()),
+		Err(DbError::InvalidPassword),
+		"Password >= 3 in size"
+	);
+	assert_eq!(
+		db.new_user("nan".into(), Alphanumeric.sample_string(&mut rand::thread_rng(), 70)),
+		Err(DbError::InvalidPassword),
+		"Password <= 64 in size"
+	);
 	assert!(db.new_user("nina".into(), "nina's pass".into()).is_ok());
 
 	assert_eq!(db.users.len(), 1);
 
-	assert!(db.login("nina", "wrong_pass").is_err());
-	assert!(db.login("nana", "wrong_pass").is_err());
-	assert!(db.login("nina", "nina's pass").is_ok());
+	assert!(db.login("nina", "wrong_pass").is_err(), "Password is wrong");
+	assert!(db.login("nana", "wrong_pass").is_err(), "User nana doesn't exist");
+	assert!(db.login("nina", "nina's pass").is_ok(), "Login success");
 }
 
 #[test]

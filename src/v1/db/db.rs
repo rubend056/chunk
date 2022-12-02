@@ -1,11 +1,13 @@
 use std::collections::{HashMap, HashSet};
 
 use log::error;
+use serde::Serialize;
 
 use crate::{
 	utils::{gen_proquint, get_secs, DbError},
+	v0::structs,
 	v1::{
-		chunk::{standardize, Access, Chunk, ChunkMeta, UserAccess},
+		chunk::{standardize, Access, Chunk, ChunkMeta, UserAccess, UserRef},
 		user::User,
 	},
 };
@@ -45,7 +47,7 @@ impl DB {
 		let user_instance = User::new(user.clone(), pass)?;
 
 		if user == "public" {
-			return Err(DbError::InvalidUser);
+			return Err(DbError::InvalidUsername);
 		}
 
 		self.users.insert(user.clone(), user_instance);
@@ -92,6 +94,12 @@ impl DB {
 		user.reset_pass(&old_pass, &pass)
 	}
 
+	fn normalize_refs(_refs: &HashSet<UserRef>, owner: &String) -> HashSet<(String, String)> {
+		_refs
+			.iter()
+			.map(|v| (v.0.clone().or(Some(owner.clone())).unwrap(), v.1.clone()))
+			.collect()
+	}
 	fn iter_tree(&self, user_access: &UserAccess, root: Option<(&Chunk, &ChunkMeta)>, depth: u32) -> Vec<ChunkTree> {
 		self
 			.chunks
@@ -102,7 +110,7 @@ impl DB {
 					// Are you my child?
 					&& {
 						// Replaces none user for chunk owner
-						let _refs = meta._refs.iter().map(|v| (v.0.clone().or(Some(chunk.owner.clone())),v.1.clone())).collect::<HashSet<_>>();
+						let _refs = DB::normalize_refs(&meta._refs, &chunk.owner) ;
 						match root {
 						Some((chunk_root, meta_root)) => {
 							meta
@@ -121,7 +129,7 @@ impl DB {
 			})
 			.map(|(_, (chunk, meta))| {
 				ChunkTree(
-					chunk.clone(),
+					(chunk, meta).into(),
 					if depth > 0 {
 						Some(self.iter_tree(user_access, Some((chunk, meta)), depth - 1))
 					} else {
@@ -131,6 +139,7 @@ impl DB {
 			})
 			.collect()
 	}
+
 	/**
 	 * Depth 0 => roots
 	 * Depth 1 => roots -> children, ...
@@ -140,49 +149,92 @@ impl DB {
 		user: String,
 		root: Option<String>,
 		depth: Option<u32>,
-	) -> Result<(Vec<ChunkTree>, Option<(Chunk, ChunkMeta)>), DbError> {
+	) -> Result<(Vec<ChunkTree>, Vec<ChunkAndMeta>), DbError> {
 		match root {
 			Some(root) => {
 				let (chunk, meta) = self._get_chunk(Some(user.clone()), &root)?;
-				// Some((, chunk))
+				let mut parents = vec![(chunk.clone(), meta.clone())];
+
+				// Find all parents recursively
+				loop {
+					let mut to_add = None;
+					if let Some(last) = parents.last() {
+						if last.1._refs.len() > 0 {
+							to_add = last
+								.1
+								._refs
+								.iter()
+								.find_map(|user_ref| self._get_chunk_from_user_ref(user_ref, Some(&last.0.owner)))
+								.and_then(|(c, m)| Some((c.clone(), m.clone())))
+						}
+					}
+					if to_add.is_some() {
+						parents.push(to_add.expect("We checked if it was some up there ^"));
+						continue;
+					}
+					break;
+				}
+
 				Ok((
 					self.iter_tree(&(user, Access::Read), Some((&chunk, &meta)), depth.unwrap_or(0)),
-					Some((chunk, meta)),
+					parents,
 				))
 			}
-			_ => Ok((self.iter_tree(&(user, Access::Read), None, depth.unwrap_or(0)), None)),
+			_ => Ok((self.iter_tree(&(user, Access::Read), None, depth.unwrap_or(0)), vec![])),
 		}
 	}
 	pub fn get_notes(&self, user: &str) -> Vec<ChunkView> {
-		
-
 		let access = (user.to_owned(), Access::Read);
 		self.chunks.iter().fold(vec![], |mut acc, (_, (chunk, meta))| {
 			if chunk.owner == *user {
-				acc.push((chunk.to_owned(), ChunkType::Owner));
+				acc.push((chunk, meta).into());
 			} else if meta.access.contains(&access) {
-				acc.push((
-					chunk.to_owned(),
-					ChunkType::Access(if meta.access.contains(&(user.to_owned(), Access::Write)) {
-						Access::Write
-					} else {
-						Access::Read
-					}),
-				));
+				let mut view: ChunkView = (chunk, meta).into();
+				view.visibility = ChunkType::Access(if meta.access.contains(&(user.to_owned(), Access::Write)) {
+					Access::Write
+				} else {
+					Access::Read
+				});
+				acc.push(view);
 			};
 			acc
+		})
+	}
+	fn _get_chunk_from_user_ref(
+		&self,
+		user_ref: &(Option<String>, String),
+		owner: Option<&String>,
+	) -> Option<(&Chunk, &ChunkMeta)> {
+		let user_ref = (user_ref.0.as_ref().or(owner), &user_ref.1);
+		self
+			.ref_id
+			.get(user_ref.1)
+			.and_then(|ids| {
+				ids.iter().find_map(|id| {
+					self.chunks.get(id).and_then(|(c, m)| {
+						if Some(&c.owner) == user_ref.0 {
+							Some((c, m))
+						} else {
+							None
+						}
+					})
+				})
+			})
+			.or_else(|| self.chunks.get(user_ref.1).and_then(|(c, m)| Some((c, m))))
+	}
+	fn _get_chunk_from_id_or_ref(&self, id_or_ref: &String) -> Option<&(Chunk, ChunkMeta)> {
+		self.chunks.get(id_or_ref).or_else(|| {
+			self
+				.ref_id
+				.get(id_or_ref)
+				.and_then(|ids| ids.iter().find_map(|id| self.chunks.get(id)))
 		})
 	}
 	fn _get_chunk(&self, user: Option<String>, id_or_ref: &String) -> Result<(Chunk, ChunkMeta), DbError> {
 		let user = user.unwrap_or("public".into());
 		let id_or_ref = standardize(id_or_ref);
 
-		if let Some((chunk, meta)) = self.chunks.get(&id_or_ref).or_else(|| {
-			self
-				.ref_id
-				.get(&id_or_ref)
-				.and_then(|ids| ids.iter().find_map(|id| self.chunks.get(id)))
-		}) {
+		if let Some((chunk, meta)) = self._get_chunk_from_id_or_ref(&id_or_ref) {
 			if chunk.owner == user
 				|| meta.access.contains(&(user, Access::Read))
 				|| meta.access.contains(&("public".into(), Access::Read))

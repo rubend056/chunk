@@ -1,4 +1,4 @@
 [env]
 #REGEX_TITLE="^#  *((?:[,. ]*\\w+)+)[,. ]*(?:[-=]?> *((?:,? *(?:\\w+:)? *\\w+)+))? *"
 #REGEX_ACCESS="^(?:share|access): *((?:,? *\\w+ (?:r|w|read|write))+)$"
-#REGEX_USER="^[a-z0-9_]+$"
+#REGEX_USERNAME="^[a-z0-9_]+$"

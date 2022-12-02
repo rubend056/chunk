@@ -32,15 +32,45 @@ pub struct DBData {
 	pub users: Vec<User>,
 }
 
-
 #[derive(Serialize)]
 pub enum ChunkType {
 	Owner,
 	Access(Access),
 }
-pub type ChunkView = (Chunk, ChunkType);
 #[derive(Serialize)]
-pub struct ChunkTree(pub Chunk, pub Option<Vec<ChunkTree>>);
+pub struct ChunkView {
+	pub id: String,
+	pub title: String,
+	pub modified: u64,
+	pub visibility: ChunkType,
+}
+impl From<&(Chunk, ChunkMeta)> for ChunkView {
+	fn from((c, m): &(Chunk, ChunkMeta)) -> Self {
+		ChunkView::from((c, m))
+	}
+}
+impl From<(&Chunk, &ChunkMeta)> for ChunkView {
+	fn from((c, m): (&Chunk, &ChunkMeta)) -> Self {
+		ChunkView {
+			id: c.id.to_owned(),
+			title: m.title.to_owned(),
+			modified: c.modified.to_owned(),
+			visibility: ChunkType::Owner,
+		}
+	}
+}
+impl From<(Chunk, ChunkMeta)> for ChunkView {
+	fn from((c, m): (Chunk, ChunkMeta)) -> Self {
+		ChunkView {
+			id: c.id,
+			title: m.title,
+			modified: c.modified,
+			visibility: ChunkType::Owner,
+		}
+	}
+}
+#[derive(Serialize)]
+pub struct ChunkTree(pub ChunkView, pub Option<Vec<ChunkTree>>);
 
 type ChunkAndMeta = (Chunk, ChunkMeta);
 type UsersToNotify = HashSet<String>;

@@ -17,6 +17,8 @@ use tokio::{
 	time,
 };
 
+use crate::v1::db::ChunkView;
+
 use super::{auth::UserClaims, ends::DB};
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
@@ -106,21 +108,39 @@ async fn handle_socket(
 		if user == "public" {
 			return "[]".into();
 		}
-		
+
 		let mut chunks = db.read().unwrap().get_notes(user);
-		chunks.sort_by_key(|(chunk, _)| -(chunk.modified as i128));
-		let chunks = chunks.iter().map(|v| v.0.id.clone()).collect::<Vec<_>>();
+		chunks.sort_by_key(|v| -(v.modified as i128));
+		let chunks = chunks.iter().map(|v| v.id.clone()).collect::<Vec<_>>();
 		serde_json::to_string(&chunks).unwrap()
 	};
 
 	let get_well_ids = |root| {
 		if user == "public" {
-			return "[[],null]".into();
+			return "[[],[]]".into();
 		}
 
 		let mut chunks = db.read().unwrap().get_chunks(user.to_owned(), root, None).unwrap();
 		chunks.0.sort_by_key(|t| -(t.0.modified as i128));
-		let chunks = (chunks.0.iter().map(|v| v.0.id.clone()).collect::<Vec<_>>(), chunks.1);
+
+		let chunks = (
+			chunks.0.iter().map(|v| v.0.id.clone()).collect::<Vec<_>>(),
+			chunks.1.into_iter().map(|v| v.into()).collect::<Vec<ChunkView>>(),
+		);
+		serde_json::to_string(&chunks).unwrap()
+	};
+	let get_graph = |root| {
+		if user == "public" {
+			return "[[],[]]".into();
+		}
+
+		let mut chunks = db.read().unwrap().get_chunks(user.to_owned(), root, None).unwrap();
+		chunks.0.sort_unstable_by_key(|t| t.0.id.to_owned());
+
+		let chunks = (
+			chunks.0,
+			chunks.1.into_iter().map(|v| v.into()).collect::<Vec<ChunkView>>(),
+		);
 		serde_json::to_string(&chunks).unwrap()
 	};
 
@@ -210,6 +230,11 @@ async fn handle_socket(
 						if res[1] == "well" {
 							Some(reply(
 								Some(get_well_ids(if res.len() > 2 { Some(res[2].into()) } else { None })),
+								MessageType::Ok,
+							))
+						} else if res[1] == "graph" {
+							Some(reply(
+								Some(get_graph(if res.len() > 2 { Some(res[2].into()) } else { None })),
 								MessageType::Ok,
 							))
 						} else {

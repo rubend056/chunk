@@ -4,8 +4,7 @@ use stop.nu *
 
 export def-env setup_dev [] {
 	load_regex
-	let-env WEB_DIST = $"($env.PWD)/web/dist/default"
-	let-env PAGE_DIST = $"($env.PWD)/web/dist/page"
+	let-env WEB_DIST = $"($env.PWD)/web/dist/web"
 	let-env BACKEND_DIST = $"($env.PWD)/web/dist/backend"
 	open dev.toml | load-env
 }

@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
 
-use crate::utils::{get_secs, DbError, REGEX_ACCESS, REGEX_TITLE, REGEX_USER};
+use crate::utils::{get_secs, DbError, REGEX_ACCESS, REGEX_TITLE, REGEX_USERNAME};
 
 #[derive(Serialize, Hash, Eq, PartialEq, Clone, Debug)]
 pub enum Access {
@@ -22,9 +22,10 @@ pub struct Chunk {
 }
 impl Chunk {
 	pub fn new(id: String, value: String, owner: String) -> Result<Self, DbError> {
-		if !REGEX_USER.is_match(owner.as_str()) {
-			return Err(DbError::InvalidUser);
-		}
+		// Username check shouldn't happen here, it should happen on User creation
+		// if !REGEX_USERNAME.is_match(owner.as_str()) {
+		// 	return Err(DbError::InvalidUsername);
+		// }
 
 		let secs = get_secs();
 		let chunk = Chunk {
@@ -186,7 +187,7 @@ impl From<&String> for ChunkMeta {
 							}
 							let (user, access) = (user_access[0], user_access[1]);
 
-							if !REGEX_USER.is_match(user_access[0]) {
+							if !REGEX_USERNAME.is_match(user_access[0]) {
 								panic!("user doesn't match user regex");
 							}
 

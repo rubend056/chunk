@@ -41,7 +41,7 @@ pub async fn chunks_get(
 ) -> Result<impl IntoResponse, DbError> {
 	info!("User is {}.", &user_claims.user);
 	let mut notes = db.read().unwrap().get_notes(&user_claims.user);
-	notes.sort_by_key(|v| -(v.0.modified as i64));
+	notes.sort_by_key(|v| -(v.modified as i64));
 	trace!("GET /chunks len {}", notes.len());
 	Ok(Json(notes))
 }
@@ -55,8 +55,14 @@ pub async fn chunks_get_id(
 	Ok(Json(notes))
 }
 
+// #[derive(Deserialize)]
+// struct WellOptions {
+//     compact: usize,
+//     size: usize,
+// }
 pub async fn well_get(
 	id: Option<Path<String>>,
+
 	Extension(db): Extension<DB>,
 	Extension(user_claims): Extension<UserClaims>,
 ) -> Result<impl IntoResponse, DbError> {
