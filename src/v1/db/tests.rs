@@ -4,8 +4,8 @@ use super::*;
 // use log::{info};
 fn init() -> DB {
 	let mut db = DB::default();
-	assert!(db.new_user("nina".into(), "4444".into()).is_ok());
-	assert!(db.new_user("john".into(), "3333".into()).is_ok());
+	assert!(db.new_user("nina".into(), "444444".into()).is_ok());
+	assert!(db.new_user("john".into(), "333333".into()).is_ok());
 
 	assert!(db.set_chunk("nina", (None, "# Todo".into())).is_ok());
 	assert!(db
@@ -48,7 +48,7 @@ fn users() {
 	assert_eq!(
 		db.new_user("nan".into(), "12".into()),
 		Err(DbError::InvalidPassword),
-		"Password >= 3 in size"
+		"Password >= 6 in size"
 	);
 	assert_eq!(
 		db.new_user("nan".into(), Alphanumeric.sample_string(&mut rand::thread_rng(), 70)),

@@ -44,7 +44,7 @@ impl DB {
 			return Err(DbError::UserTaken);
 		}
 
-		let user_instance = User::new(user.clone(), pass)?;
+		let user_instance = User::new(&user, &pass)?;
 
 		if user == "public" {
 			return Err(DbError::InvalidUsername);
@@ -60,6 +60,13 @@ impl DB {
 		}
 
 		Ok(())
+	}
+	pub fn get_user(&self, user: &str) -> Result<User, DbError> {
+		self
+			.users
+			.get(user)
+			.and_then(|u| Some(u.to_owned()))
+			.ok_or(DbError::NotFound)
 	}
 	// pub fn remove_user(&mut self, user: String, _pass: String) -> Result<(), DbError> {
 	// 	if let Some(_user_instance) = self.users.get(&user) {

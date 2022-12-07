@@ -6,6 +6,7 @@ export def-env setup_dev [] {
 	load_regex
 	let-env WEB_DIST = $"($env.PWD)/web/dist/web"
 	let-env BACKEND_DIST = $"($env.PWD)/web/dist/backend"
+	open env.toml | load-env
 	open dev.toml | load-env
 }
 

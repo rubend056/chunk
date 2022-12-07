@@ -8,6 +8,7 @@ use crate::utils::{get_secs, DbError, REGEX_ACCESS, REGEX_TITLE, REGEX_USERNAME}
 pub enum Access {
 	Read,
 	Write,
+	Admin,
 }
 
 pub type UserAccess = (String, Access);
@@ -127,6 +128,7 @@ impl ChunkMeta {
 					match a {
 						Access::Read => "R",
 						Access::Write => "W",
+						Access::Admin => "A",
 					}
 				)
 			})
@@ -181,7 +183,19 @@ impl From<&String> for ChunkMeta {
 						.to_lowercase()
 						.split(",")
 						.map(|ua| {
-							let user_access = ua.trim().split(" ").collect::<Vec<_>>();
+							let user_access = ua
+								.trim()
+								.split(" ")
+								.filter_map(|v| {
+									let o = v.trim();
+									if o.is_empty() {
+										None
+									} else {
+										Some(o)
+									}
+								})
+								.map(|v| v.trim())
+								.collect::<Vec<_>>();
 							if user_access.len() < 2 {
 								panic!("user_access is NEVER less than 2 in length");
 							}
@@ -197,16 +211,21 @@ impl From<&String> for ChunkMeta {
 									Access::Read
 								} else if access == "w" || access == "write" {
 									Access::Write
+								} else if access == "a" || access == "admin" {
+									Access::Admin
 								} else {
-									panic!("access should be r/w/read/write ONLY");
+									panic!("access should be r/w/a/read/write/admin ONLY");
 								},
 							)
 						})
 						.for_each(|ua| {
 							access.insert(ua.clone());
-							// Duplicating read access for write access users
-							if ua.1 == Access::Write {
-								access.insert((ua.0, Access::Read));
+							// Duplicating accesses
+							if ua.1 == Access::Write || ua.1 == Access::Admin {
+								access.insert((ua.0.clone(), Access::Read));
+							}
+							if ua.1 == Access::Admin {
+								access.insert((ua.0.clone(), Access::Write));
 							}
 						});
 				}

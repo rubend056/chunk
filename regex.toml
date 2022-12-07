@@ -1,5 +1,5 @@
 TITLE="^#  *((?:[,. ]*\\w+)+)[,. ]*(?:[-=]?> *((?:,? *(?:\\w+:)? *\\w+)+))? *"
-ACCESS="^(?:share|access): *((?: *,? *\\w+  *(?:r|w|read|write))+) *$"
+ACCESS="^(?:share|access): *((?: *,? *[a-z0-9_]{3,10} +(?:r|w|a|read|write|admin))+) *$"
 PROQUINT="(?:_?[aioubdfghjklmnprstvz]{5})+"
 USERNAME="^[a-z0-9_]{3,10}$"
 PASSWORD="^.{6,64}$"

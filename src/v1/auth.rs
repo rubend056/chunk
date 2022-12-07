@@ -11,7 +11,7 @@ use pasetors::keys::{AsymmetricKeyPair, Generate};
 use pasetors::token::{TrustedToken, UntrustedToken};
 use pasetors::{public, version4::V4, Public};
 use serde::Serialize;
-use time::OffsetDateTime;
+use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
 use super::ends::DB;
 
@@ -27,22 +27,27 @@ pub async fn login(
 	db.login(&user, &pass)
 		.and_then(|_| {
 			// Create token
-			// Setup the default claims, which include `iat` and `nbf` as the current time and `exp` of one hour.
-			// Add a custom `data` claim as well.
+
 			let mut claims = Claims::new().unwrap();
+
 			claims.issuer("chunk.anty.dev").unwrap();
 			claims.add_additional("user", user.clone()).unwrap();
 
+			let iat = OffsetDateTime::from_unix_timestamp(get_secs().try_into().unwrap())
+				.unwrap()
+				.format(&Rfc3339)
+				.unwrap();
 			let exp = get_secs() + SECS_IN_DAY * 7; // 7 days
 			let exp = OffsetDateTime::from_unix_timestamp(exp.try_into().unwrap())
 				.unwrap()
-				.format(&time::format_description::well_known::Rfc3339)
+				.format(&Rfc3339)
 				.unwrap();
 
+			claims.issued_at(&iat).unwrap();
 			claims.expiration(&exp).unwrap();
 
 			// Generate the keys and sign the claims.
-			let pub_token = public::sign(&KP.secret, &claims, None, Some(b"implicit assertion")).unwrap();
+			let pub_token = public::sign(&KP.secret, &claims, None, None).unwrap();
 
 			Ok([(
 				header::SET_COOKIE,
@@ -132,8 +137,22 @@ pub async fn authenticate<B>(mut req: Request<B>, next: Next<B>) -> Result<Respo
 		}) {
 		if let Some(auth_value) = auth_header.iter().find(|(k, _v)| *k == "auth").and_then(|v| Some(v.1)) {
 			if let Some((token, _user_claims)) = get_valid_token(auth_value) {
-				user_claims = _user_claims;
-				req.extensions_mut().insert(token);
+				let claims = token.payload_claims().unwrap();
+				let user_claim = claims.get_claim("user").unwrap().as_str().unwrap();
+				let iat_claim = claims.get_claim("iat").unwrap().as_str().unwrap();
+				let iat_unix = OffsetDateTime::parse(iat_claim, &Rfc3339).unwrap().unix_timestamp() as u64;
+				let mut iat_good = false;
+
+				let db = req.extensions().get::<DB>().unwrap();
+				if let Ok(user) = db.read().unwrap().get_user(user_claim) {
+					if iat_unix >= user.not_before {
+						iat_good = true;
+					}
+				}
+				if iat_good {
+					user_claims = _user_claims;
+					req.extensions_mut().insert(token);
+				}
 			}
 		}
 	}
@@ -173,13 +192,7 @@ fn get_valid_token(token: &str) -> Option<(TrustedToken, UserClaims)> {
 	validation_rules.validate_issuer_with("chunk.anty.dev");
 
 	if let Ok(untrusted_token) = UntrustedToken::<Public, V4>::try_from(token) {
-		if let Ok(trusted_token) = public::verify(
-			&KP.public,
-			&untrusted_token,
-			&validation_rules,
-			None,
-			Some(b"implicit assertion"),
-		) {
+		if let Ok(trusted_token) = public::verify(&KP.public, &untrusted_token, &validation_rules, None, None) {
 			let claims = trusted_token.payload_claims().unwrap().clone();
 			return Some((trusted_token, UserClaims::from(&claims)));
 		}

@@ -190,8 +190,8 @@ async fn backup_service(cache: Arc<RwLock<Cache>>, db: DB, mut shutdown_rx: watc
 			cache.read().unwrap().last_backup as i128
 			// Minus seconds now
 			- get_secs() as i128
-			// Plus 2 days
-			+ (SECS_IN_DAY as i128 * 2);
+			// Plus 2 hours
+			+ (SECS_IN_HOUR as i128 * 2);
 
 		if wait <= 0 {
 			let secs = get_secs();

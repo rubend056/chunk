@@ -11,6 +11,7 @@ export def build [] {
 	stop
 	
 	load_regex
+	open env.toml | load-env
 	open prod.toml | load-env
 
 	# Create output dirs
