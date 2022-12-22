@@ -5,13 +5,14 @@ use stop.nu *
 export def-env setup_dev [] {
 	load_regex
 	let-env WEB_DIST = $"($env.PWD)/web/dist/web"
+	let-env PAGE_DIST = $"($env.PWD)/web/dist/web"
 	let-env BACKEND_DIST = $"($env.PWD)/web/dist/backend"
 	open env.toml | load-env
 	open dev.toml | load-env
 }
 
 export def start [] {
-	stop
+	stop_force
 	setup_dev
 	
 	/bin/env scripts/start.sh

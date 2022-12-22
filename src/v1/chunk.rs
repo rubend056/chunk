@@ -1,91 +1,79 @@
-use std::collections::HashSet;
+use std::{
+	collections::{HashMap, HashSet},
+	fmt::Debug,
+};
 
+use log::error;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
-use crate::utils::{get_secs, DbError, REGEX_ACCESS, REGEX_TITLE, REGEX_USERNAME};
+use crate::utils::{gen_proquint, get_secs, standardize, DbError, REGEX_ACCESS, REGEX_TITLE, REGEX_USERNAME};
 
-#[derive(Serialize, Hash, Eq, PartialEq, Clone, Debug)]
-pub enum Access {
-	Read,
-	Write,
-	Admin,
-}
+
 
 pub type UserAccess = (String, Access);
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct Chunk {
-	pub id: String,
-	pub value: String,
-	pub owner: String,
-	pub created: u64,
-	pub modified: u64,
-}
-impl Chunk {
-	pub fn new(id: String, value: String, owner: String) -> Result<Self, DbError> {
-		// Username check shouldn't happen here, it should happen on User creation
-		// if !REGEX_USERNAME.is_match(owner.as_str()) {
-		// 	return Err(DbError::InvalidUsername);
-		// }
-
-		let secs = get_secs();
-		let chunk = Chunk {
-			id,
-			value,
-			owner,
-			created: secs,
-			modified: secs,
-		};
-
-		Ok(chunk)
-	}
-}
 
 //---------------------------------- META --------------------
 
-pub fn standardize(v: &str) -> String {
-	v.trim()
-		.to_lowercase()
-		.chars()
-		.map(|v| match v {
-			'-' => '_',
-			' ' => '_',
-			_ => v,
-		})
-		.filter(|v| match v {
-			'a'..='z' => true,
-			'0'..='9' => true,
-			'_' => true,
-			_ => false,
-		})
-		.collect()
-}
-pub fn standardize_pretty(v: &str) -> String {
-	v.trim()
-		.chars()
-		.map(|v| match v {
-			'-' => ' ',
-			'_' => ' ',
-			_ => v,
-		})
-		.filter(|v| match v {
-			'A'..='Z' => true,
-			'a'..='z' => true,
-			'0'..='9' => true,
-			' ' => true,
-			_ => false,
-		})
-		.collect()
-}
-
 pub type UserRef = (Option<String>, String);
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub enum CacheValue {
+	String(String),
+	Int(i32),
+}
+pub enum CacheDirection {
+	Up,
+	Down,
+}
+/**
+ * Calculates current value from Parents/Children
+ */
+type CacheFn = fn(&mut ChunkAndMeta, &Vec<&ChunkAndMeta>) -> String;
+#[derive(Clone)]
+pub struct GraphCache {
+	key: String,
+	value: String,
+	valid: bool,
+	/**
+	 *  If true means second argument is parents and will, false -> children
+	 */
+	up: bool,
+	function: CacheFn,
+}
+impl Debug for GraphCache {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		f.write_fmt(format_args!("{}:{} valid:{}", &self.key, &self.value, &self.valid))
+	}
+}
+// impl From<(&str, &'static CacheFn)> for GraphCache {
+// 	fn from((key, function): (&str,&'static CacheFn)) -> Self {
+// 		GraphCache {
+// 			key: key.into(),
+// 			function,
+// 			valid: false,
+// 			value: "".into(),
+// 		}
+// 	}
+// }
+
+#[derive(Debug, Clone, Serialize, Default)]
 pub struct ChunkMeta {
 	pub _ref: String, // Standardized title
 	pub title: String,
 	pub _refs: HashSet<UserRef>, // Standardized references to other chunks
 	pub access: HashSet<UserAccess>,
+	#[serde(skip)]
+	pub fields: HashMap<String, GraphCache>,
+}
+
+impl PartialEq for ChunkMeta {
+	fn eq(&self, other: &Self) -> bool {
+		self._ref == other._ref && self.title == other.title && self._refs == other._refs && self.access == other.access
+	}
+	fn ne(&self, other: &Self) -> bool {
+		!self.eq(other)
+	}
 }
 
 impl ChunkMeta {
@@ -141,20 +129,38 @@ impl ChunkMeta {
 	}
 }
 
+fn child_count(v: &mut ChunkAndMeta, o: &Vec<&ChunkAndMeta>) -> String {
+	o.len().to_string()
+}
+// const cache_default: [(String, GraphCache);1] = ;
+
+
+
 impl From<&String> for ChunkMeta {
+	// let j = Fn()
 	// Extracts metadata from Chunk
 	fn from(value: &String) -> Self {
 		let mut _ref = "".into();
 		let mut title = "".into();
 		let mut _refs = HashSet::<UserRef>::default();
 		let mut access = HashSet::<UserAccess>::default();
+		let mut cache = HashMap::<String, GraphCache>::from([(
+			"child_count".into(),
+			GraphCache {
+				key: "child_count".into(),
+				value: String::from(""),
+				function: child_count,
+				up: false,
+				valid: false,
+			},
+		)]);
 
 		{
 			// Extracting  # title/ref -> ref,ref,ref
 			if let Some(captures) = REGEX_TITLE.captures(&value) {
 				if let Some(m) = captures.get(1) {
 					_ref = standardize(m.as_str());
-					title = standardize_pretty(m.as_str());
+					title = m.as_str().into();
 				}
 				if let Some(m) = captures.get(2) {
 					_refs = m
@@ -175,68 +181,34 @@ impl From<&String> for ChunkMeta {
 			}
 		}
 
-		{
-			// Extracting  access/share
-			for capture in REGEX_ACCESS.captures_iter(&value) {
-				if let Some(m) = capture.get(1) {
-					m.as_str()
-						.to_lowercase()
-						.split(",")
-						.map(|ua| {
-							let user_access = ua
-								.trim()
-								.split(" ")
-								.filter_map(|v| {
-									let o = v.trim();
-									if o.is_empty() {
-										None
-									} else {
-										Some(o)
-									}
-								})
-								.map(|v| v.trim())
-								.collect::<Vec<_>>();
-							if user_access.len() < 2 {
-								panic!("user_access is NEVER less than 2 in length");
-							}
-							let (user, access) = (user_access[0], user_access[1]);
-
-							if !REGEX_USERNAME.is_match(user_access[0]) {
-								panic!("user doesn't match user regex");
-							}
-
-							(
-								user.into(),
-								if access == "r" || access == "read" {
-									Access::Read
-								} else if access == "w" || access == "write" {
-									Access::Write
-								} else if access == "a" || access == "admin" {
-									Access::Admin
-								} else {
-									panic!("access should be r/w/a/read/write/admin ONLY");
-								},
-							)
-						})
-						.for_each(|ua| {
-							access.insert(ua.clone());
-							// Duplicating accesses
-							if ua.1 == Access::Write || ua.1 == Access::Admin {
-								access.insert((ua.0.clone(), Access::Read));
-							}
-							if ua.1 == Access::Admin {
-								access.insert((ua.0.clone(), Access::Write));
-							}
-						});
-				}
-			}
-		}
+		extract_access(value, &mut access);
 
 		ChunkMeta {
 			_ref,
 			title,
 			_refs,
 			access,
+			fields: cache,
 		}
+	}
+}
+impl From<&Chunk> for ChunkMeta {
+	fn from(chunk: &Chunk) -> Self {
+		let mut meta = ChunkMeta::from(&chunk.value);
+		meta
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use crate::utils::REGEX_TITLE;
+
+	#[test]
+	fn title_regex() {
+		assert!(REGEX_TITLE.is_match("# Groceries\n"));
+		assert!(REGEX_TITLE.is_match("# Work -> pamup_fupin\n"));
+		assert!(REGEX_TITLE.is_match("# Work -> pamup_fupin, lopis_muzuz\n"));
+		assert!(REGEX_TITLE.is_match("# Test ->  pamup_fupin, pamit_losab_torak\n"));
+		
 	}
 }

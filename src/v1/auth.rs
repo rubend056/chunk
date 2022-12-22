@@ -20,11 +20,12 @@ lazy_static! {
 }
 
 pub async fn login(
-	Json((user, pass)): Json<(String, String)>,
 	Extension(db): Extension<DB>,
+	Json((user, pass)): Json<(String, String)>,
 ) -> Result<impl IntoResponse, DbError> {
 	let db = db.write().unwrap();
-	db.login(&user, &pass)
+	db.auth
+		.login(&user, &pass)
 		.and_then(|_| {
 			// Create token
 
@@ -63,12 +64,13 @@ pub async fn login(
 		})
 }
 pub async fn register(
-	Json((user, pass)): Json<(String, String)>,
 	Extension(db): Extension<DB>,
+	Json((user, pass)): Json<(String, String)>,
 ) -> Result<impl IntoResponse, DbError> {
 	let mut db = db.write().unwrap();
 
-	db.new_user(user.clone(), pass.clone())
+	db.auth
+		.new_user(&user, &pass)
 		.and_then(|_| {
 			info!("User created '{}'.", &user);
 			Ok("User created.")
@@ -79,12 +81,12 @@ pub async fn register(
 		})
 }
 pub async fn reset(
-	Json((user, old_pass, pass)): Json<(String, String, String)>,
 	Extension(db): Extension<DB>,
+	Json((user, old_pass, pass)): Json<(String, String, String)>,
 ) -> Result<impl IntoResponse, DbError> {
 	let mut db = db.write().unwrap();
 
-	db.reset(&user, &pass, &old_pass)
+	db.auth.reset(&user, &pass, &old_pass)
 		.and_then(|_| {
 			info!("User password reset '{}'.", &user);
 			Ok("User pass reset.")
@@ -144,11 +146,13 @@ pub async fn authenticate<B>(mut req: Request<B>, next: Next<B>) -> Result<Respo
 				let mut iat_good = false;
 
 				let db = req.extensions().get::<DB>().unwrap();
-				if let Ok(user) = db.read().unwrap().get_user(user_claim) {
+				if let Ok(user) = db.read().unwrap().auth.get_user(user_claim) {
 					if iat_unix >= user.not_before {
 						iat_good = true;
 					}
 				}
+				
+				
 				if iat_good {
 					user_claims = _user_claims;
 					req.extensions_mut().insert(token);

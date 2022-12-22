@@ -1,4 +1,9 @@
-use std::{collections::HashSet, net::SocketAddr, sync::RwLock, time::Duration};
+use std::{
+	collections::{HashSet, VecDeque},
+	net::SocketAddr,
+	sync::{Arc, RwLock},
+	time::Duration,
+};
 
 use axum::{
 	extract::{
@@ -12,69 +17,127 @@ use axum::{
 use futures::{sink::SinkExt, stream::StreamExt};
 use log::{error, info};
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use tokio::{
 	sync::{broadcast, watch},
 	time,
 };
 
-use crate::v1::db::ChunkView;
+use crate::v1::db::{db_chunk::DBChunk, Access, ChunkId, ChunkVec, ChunkView, SortType, ViewType};
 
 use super::{auth::UserClaims, ends::DB};
 
-#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+/**
+ * Defines a Socket Message Type
+ */
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub enum MessageType {
-	// A request from client
-	#[serde(rename = "Req")]
-	#[default]
-	Request,
-	// A response to a request
-	#[serde(rename = "Ok")]
+	// Id + Ok + Value?
 	Ok,
-	// An error occourred, usually because of a request
+	// Id + Err + Value?
 	#[serde(rename = "Err")]
 	Error,
-	// A change happened
-	#[serde(rename = "C")]
-	Change,
-	// A change delta message
-	// #[serde(rename = "Cd")]
-	// ChangeDiff,
 }
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug)]
 #[serde(default)]
 pub struct SocketMessage {
-	// #[serde(skip)]
-	id: Option<u32>,
-	#[serde(rename = "type")]
-	pub _type: MessageType,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	id: Option<usize>,
+	#[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+	pub _type: Option<MessageType>,
+	#[serde(skip_serializing_if = "String::is_empty")]
 	pub resource: String,
+	#[serde(skip_serializing_if = "Option::is_none")]
 	pub value: Option<String>,
 }
-#[derive(Clone, Debug)]
-pub struct ResourceMessage {
-	pub id: u32,
-	// pub _type: MessageType,
-	pub resource: String,
-	pub value: Option<String>,
-	pub users: HashSet<String>,
-}
-impl ResourceMessage {
-	pub fn new<T: Serialize>(resource: String, value: Option<&T>, users: HashSet<String>) -> Self {
+/**
+ * (Value)
+ */
+impl<T: Serialize> From<&T> for SocketMessage {
+	fn from(value: &T) -> Self {
 		Self {
-			id: unsafe {
-				let j = RESOURCE_ID.clone();
-				RESOURCE_ID += 1;
-				j
-			},
-			// _type: MessageType::Change,
-			resource,
-			value: value.and_then(|value| Some(serde_json::to_string(value).unwrap())),
-			users,
+			value: serde_json::to_string(value).ok(),
+			..Default::default()
 		}
 	}
 }
-static mut RESOURCE_ID: u32 = 0;
+/**
+ * (Type, Value)
+ */
+impl<T: Serialize> From<(MessageType, &T)> for SocketMessage {
+	fn from((_type, value): (MessageType, &T)) -> Self {
+		Self {
+			_type: Some(_type),
+			value: serde_json::to_string(value).ok(),
+			..Default::default()
+		}
+	}
+}
+/**
+ * (Type)
+ */
+impl From<MessageType> for SocketMessage {
+	fn from(_type: MessageType) -> Self {
+		Self {
+			_type: Some(_type),
+			..Default::default()
+		}
+	}
+}
+
+#[derive(Clone, Debug)]
+pub struct ResourceMessage {
+	pub id: usize,
+	// pub _type: MessageType,
+	pub resource: String,
+	pub value: Value,
+	pub users: HashSet<String>,
+}
+impl Default for ResourceMessage {
+	fn default() -> Self {
+		Self {
+			id: resource_id_next(),
+			resource: Default::default(),
+			value: Default::default(),
+			users: Default::default(),
+		}
+	}
+}
+/**
+ * (Resource, Users)
+ */
+impl From<(&str, HashSet<String>)> for ResourceMessage {
+	fn from((resource, users): (&str, HashSet<String>)) -> Self {
+		Self {
+			resource: resource.into(),
+			users,
+			..Default::default()
+		}
+	}
+}
+/**
+ * (Resource, Users, Value)
+ */
+impl<T: Serialize> From<(&str, HashSet<String>, &T)> for ResourceMessage {
+	fn from((resource, users, value): (&str, HashSet<String>, &T)) -> Self {
+		Self {
+			resource: resource.into(),
+			users,
+			value: json!(value),
+			..Default::default()
+		}
+	}
+}
+
+static mut RESOURCE_ID: usize = 0;
+fn resource_id_next() -> usize {
+	unsafe {
+		let j = RESOURCE_ID.clone();
+		RESOURCE_ID += 1;
+		j
+	}
+}
 
 // pub type ResourceReceiver = broadcast::Receiver<ResourceChange>;
 pub type ResourceSender = broadcast::Sender<ResourceMessage>;
@@ -85,10 +148,10 @@ pub async fn websocket_handler(
 	Extension(db): Extension<DB>,
 	Extension(tx_r): Extension<ResourceSender>,
 	Extension(shutdown_rx): Extension<watch::Receiver<()>>,
-	ConnectInfo(connect): ConnectInfo<SocketAddr>,
+	ConnectInfo(address): ConnectInfo<SocketAddr>,
 ) -> Response {
-	info!("Opening Websocket with {} on {}.", &_user.user, connect);
-	ws.on_upgrade(|socket| handle_socket(socket, _user, db, tx_r, shutdown_rx))
+	info!("Opening Websocket with {} on {}.", &_user.user, address);
+	ws.on_upgrade(move |socket| handle_socket(socket, _user, db, tx_r, shutdown_rx, address))
 }
 
 async fn handle_socket(
@@ -97,6 +160,7 @@ async fn handle_socket(
 	db: DB,
 	tx_resource: ResourceSender,
 	mut shutdown_rx: watch::Receiver<()>,
+	address: SocketAddr,
 ) {
 	let user = &user_claims.user;
 	// Create a new receiver for our Broadcast
@@ -104,210 +168,195 @@ async fn handle_socket(
 
 	let (mut tx_socket, mut rx_socket) = socket.split();
 
-	let get_notes_ids = || {
+	let get_notes = || {
 		if user == "public" {
-			return "[]".into();
+			return json!([]);
 		}
 
-		let mut chunks = db.read().unwrap().get_notes(user);
-		chunks.sort_by_key(|v| -(v.modified as i128));
-		let chunks = chunks.iter().map(|v| v.id.clone()).collect::<Vec<_>>();
-		serde_json::to_string(&chunks).unwrap()
+		let mut chunks: ChunkVec = db.write().unwrap().get_chunks(user).into();
+		chunks.sort(SortType::Modified);
+		let chunks = chunks.0.into_iter().map(|v| ChunkView::from((v, user.as_str(), ViewType::Notes))).collect::<Vec<_>>();
+		json!(chunks)
 	};
 
-	let get_well_ids = |root| {
+	/// [[parent,parent], [child,child]]
+	let get_subtree = |root: Option<&str>, view_type: ViewType| {
 		if user == "public" {
-			return "[[],[]]".into();
+			return json!([[], []]);
 		}
-
-		let mut chunks = db.read().unwrap().get_chunks(user.to_owned(), root, None).unwrap();
-		chunks.0.sort_by_key(|t| -(t.0.modified as i128));
-
-		let chunks = (
-			chunks.0.iter().map(|v| v.0.id.clone()).collect::<Vec<_>>(),
-			chunks.1.into_iter().map(|v| v.into()).collect::<Vec<ChunkView>>(),
-		);
-		serde_json::to_string(&chunks).unwrap()
-	};
-	let get_graph = |root| {
-		if user == "public" {
-			return "[[],[]]".into();
-		}
-
-		let mut chunks = db.read().unwrap().get_chunks(user.to_owned(), root, None).unwrap();
-		chunks.0.sort_unstable_by_key(|t| t.0.id.to_owned());
-
-		let chunks = (
-			chunks.0,
-			chunks.1.into_iter().map(|v| v.into()).collect::<Vec<ChunkView>>(),
-		);
-		serde_json::to_string(&chunks).unwrap()
+		let root = root.and_then(|id| db.read().unwrap().get_chunk(id, user));
+		let subtree = 
+			// Graph
+			db.write().unwrap().subtree(
+				root.as_ref(),
+				&user.as_str().into(),
+				&|v| {
+					let mut vec = ChunkVec::from(v);
+					vec.sort(SortType::ModifiedDynamic(user.as_str().into()));
+					vec.into()
+				},
+				&|v| json!(ChunkView::from((v, user.as_str(), view_type))),
+				1,
+			)
+		
+		;
+		json!(subtree)
 	};
 
-	let resource_id_last = RwLock::new(0u32);
-	// let socket_id_last = RwLock::new(0u32);
+	// Keep last resource id so when we're sending
+	// a message in resource stream, we don't process
+	// the message on the instance that sent it
+	// (if it was incremented by that instance beforehand)
+	let resource_id_last = RwLock::new(0);
+
 	let handle_incoming = |m| {
-		match m {
-			Message::Text(m) => {
-				let m = serde_json::from_str::<SocketMessage>(&m).unwrap();
-				let reply = |value, _type| {
-					Message::Text(
-						serde_json::to_string(&SocketMessage {
-							id: m.id,
-							resource: m.resource.clone(),
-							value,
-							_type,
-						})
-						.unwrap(),
-					)
-				};
-				let res = m.resource.split("/").collect::<Vec<_>>();
-
-				// let
-				if res[0] == "chunks" {
-					if res.len() > 1 {
-						match m.value {
-							// Updating chunk/:id
-							Some(v) => {
-								// if (m._type == MessageType::Change){return None;}
-								let id = res[1];
-								let chunk_last = db.read().unwrap().get_chunk(Some(user.to_owned()), &id.to_string());
-								if let Err(err) = chunk_last {
-									return Some(reply(Some(format!("{err:?}")), MessageType::Error));
-								}
-								let chunk_last = chunk_last.unwrap().value;
-								match db.write().unwrap().set_chunk(user, (Some(id.into()), v)) {
-									Ok((chunk, users, users_access_changed)) => {
-										// Send a diff message to all open sockets
-										let diff = diff_calc(&chunk_last, &chunk.value);
-										let m = ResourceMessage::new(format!("chunks/{}/diff", &chunk.id), Some(&diff), users);
-										// m._type = MessageType::ChangeDiff;
-										{
-											// Update our resource_id_last so we don't send the same data back when sending a signal to tx_resource
-											let mut resource_id_last = resource_id_last.write().unwrap();
-											*resource_id_last = m.id;
-										}
-										tx_resource.send(m).unwrap();
-
-										// Send a message to all users who's access changed in this note change, so they can reload their views
-										if users_access_changed.len() > 0 {
-											tx_resource
-												.send(ResourceMessage::new::<()>(
-													format!("chunks"),
-													None,
-													users_access_changed,
-												))
-												.unwrap();
-										}
-
-										Some(reply(None, MessageType::Ok))
-									}
-									// Couldn't write, so reply with an Error
-									Err(err) => Some(reply(Some(format!("{err:?}")), MessageType::Error)),
-								}
-							}
-							// Requesting chunk/:id
-							None => Some(
-								match db.read().unwrap().get_chunk(Some(user.to_owned()), &res[1].into()) {
-									Ok(v) => reply(Some(serde_json::to_string(&v).unwrap()), MessageType::Ok),
-									Err(err) => reply(Some(serde_json::to_string(&err).unwrap()), MessageType::Error),
-								},
-							),
-						}
-					} else {
-						match m.value {
-							// Is updating resource
-							Some(_v) => None,
-							// Is requesting resource
-							None => {
-								let _db = db.read().unwrap();
-								Some(reply(Some(get_notes_ids()), MessageType::Ok))
-							}
+		if let Message::Text(m) = m {
+			let m = serde_json::from_str::<SocketMessage>(&m).unwrap();
+			let reply = |mut v: SocketMessage| {
+				v.resource = m.resource.to_owned();
+				v.id = m.id;
+				// Send ok if id exists but message doesn't have any, and remove status if id doesn't exist
+				match v.id {
+					Some(_) => {
+						if v._type.is_none() {
+							v._type = Some(MessageType::Ok)
 						}
 					}
-				} else if res[0] == "views" {
-					if res.len() > 1 {
-						if res[1] == "well" {
-							Some(reply(
-								Some(get_well_ids(if res.len() > 2 { Some(res[2].into()) } else { None })),
-								MessageType::Ok,
-							))
-						} else if res[1] == "graph" {
-							Some(reply(
-								Some(get_graph(if res.len() > 2 { Some(res[2].into()) } else { None })),
-								MessageType::Ok,
-							))
-						} else {
-							None
-						}
-					} else {
-						error!("View needs name");
-						None
+					None => {
+						v._type = None;
 					}
-				} else if res[0] == "user" {
-					Some(reply(
-						Some(serde_json::to_string(&user_claims).unwrap()),
-						MessageType::Ok,
-					))
-				} else {
-					error!("Resource {} unknown", res[0]);
-					None
 				}
+				Some(Message::Text(serde_json::to_string(&v).unwrap()))
+			};
+			let mut res = m.resource.split("/").collect::<VecDeque<_>>();
+			let mut piece = res.pop_front();
+
+			if piece == Some("chunks") {
+				if let Some(id) = res.pop_front() {
+					// If an id was provided
+					if let Some(value) = m.value {
+						// User wants to change a value
+						// if (m._type == MessageType::Change){return None;}
+						let db_chunk: DBChunk = (id, value.as_str()).into();
+						let users = db_chunk.access_users();
+						match db.write().unwrap().update_chunk_with_diff(db_chunk, user) {
+							Ok((users_to_notify, diff)) => {
+								let m = ResourceMessage::from((format!("chunks/{}/diff", id).as_str(), users, &diff));
+								{
+									// Update our resource_id_last so we don't send the same data back when sending a signal to tx_resource
+									let mut resource_id_last = resource_id_last.write().unwrap();
+									*resource_id_last = m.id;
+								}
+								tx_resource.send(m).unwrap();
+
+								if users_to_notify.len() > 0 {
+									tx_resource
+										.send(ResourceMessage::from(("chunks", users_to_notify)))
+										.unwrap();
+								}
+
+								return reply(MessageType::Ok.into());
+							}
+							Err(err) => return reply((MessageType::Error, &format!("{err:?}")).into()),
+						}
+					} else {
+						// Request for "chunks/<id>"
+						if let Some(v) = db.read().unwrap().get_chunk(id, &user) {
+							return reply((&ChunkView::from((v, user.as_str()))).into());
+						}
+					}
+					return reply((MessageType::Error, &format!("NotFound")).into());
+				} else {
+					// Request for "chunks"
+					return reply((&get_notes()).into());
+				}
+			} else if piece == Some("views") {
+				piece = res.pop_front();
+				let root_id = res.pop_front();
+				if piece == Some("notes") {
+					return reply((&get_notes()).into());
+				} else if piece == Some("well") {
+					return reply((&get_subtree(root_id, ViewType::Well)).into());
+				} else if piece == Some("graph") {
+					return reply((&get_subtree(root_id, ViewType::Graph)).into());
+				}
+				error!("View needs name");
+				return None;
+			} else if piece == Some("user") {
+				let mut user = json!(&user_claims);
+				if let Value::Object(mut user_o) = user {
+					let mut db = db.write().unwrap();
+					let chunks = db.get_chunks(&user_claims.user);
+					user_o.insert("notes_visible".into(), chunks.iter().count().into());
+					user_o.insert(
+						"notes_owned".into(),
+						chunks
+							.iter()
+							.filter(|chunk| chunk.read().unwrap().chunk().owner == user_claims.user)
+							.count()
+							.into(),
+					);
+					user_o.insert(
+						"notes_owned_public".into(),
+						chunks
+							.iter()
+							.filter(|chunk| {
+								let chunk = chunk.read().unwrap();
+								chunk.chunk().owner == user_claims.user && chunk.has_access(&"public".into())
+							})
+							.count()
+							.into(),
+					);
+					user = json!(user_o);
+				}
+				return reply((&user).into());
 			}
-			_ => None,
+
+			error!("Message {m:?} unknown");
 		}
+
+		None
 	};
 
-	let handle_resource = |m: ResourceMessage| -> Vec<String> {
-		let mut ms = vec![];
+	let handle_resource = |message: ResourceMessage| -> Vec<String> {
+		let mut messages = vec![];
 		{
 			// Only continue if the message's id is greater than our last processed id
 			let mut resource_id_last = resource_id_last.write().unwrap();
-			if m.id <= *resource_id_last {
-				return ms;
+			if message.id <= *resource_id_last {
+				return messages;
 			}
-			*resource_id_last = m.id;
+			*resource_id_last = message.id;
 		}
 		// Only continue if the connected user is part of the list of users in the message
-		if !m.users.contains(user) {
-			return ms;
+		if !message.users.contains(user) {
+			return messages;
 		}
-		info!("Triggered '{}' to '{}'", &m.resource, user);
+		info!("Triggered '{}' to '{}'", &message.resource, user);
 
-		// Get the socket id, and increment it by 1
-		// let socket_id = {let id = socket_id_last.write().unwrap();let _id = *id;*id+=1;_id};
-		// let mut push_m = |r, v,t| {
+		let mut socket_message = SocketMessage::from(&message.value);
+		socket_message.resource = message.resource.clone();
+		messages.push(serde_json::to_string(&socket_message).unwrap());
 
-		// };
-		let m = SocketMessage {
-			id: None,
-			resource: m.resource,
-			value: m.value,
-			_type: MessageType::Change, // m._type
-		};
-		ms.push(serde_json::to_string(&m).unwrap());
-
-		ms
+		messages
 	};
-
-	// let mut already_closed = false;
 	loop {
 		tokio::select! {
 			// Handles Websocket incomming
 			m = rx_socket.next() => {
 				if let Some(m) = m{
+
 					if let Ok(m) = m {
 						// info!("Received {m:?}");
 						if let Some(m) = handle_incoming(m){
 							tx_socket.send(m).await.unwrap();
 						};
 					}else{
-						error!("{m:?}");
+						info!("Received Err from {address}, client disconnected");
 						break;
 					}
 				}else{
-					// already_closed = true;
-					info!("Received None, assuming closed");
+					info!("Received None from {address}, client disconnected");
 					break;
 				}
 			}
@@ -318,9 +367,18 @@ async fn handle_socket(
 					for m in ms {
 						tx_socket.feed(Message::Text(m)).await.unwrap();
 					}
-					tx_socket.flush().await.unwrap();
+					if let Err(err) = tx_socket.flush().await {
+
+							info!("Got {err:?} while sending to {address}, assuming client disconnected");
+							break;
+
+					};
 				}else{
-					error!("{m:?}");
+					error!("Received Err resource {m:?} on {address}, closing connection.");
+					match tx_socket.close().await{
+						Ok(()) => {info!("Socket {address} closed successfully!")}
+						Err(err) => {error!("Got {err:?} on {address} while closing");}
+					}
 					break;
 				}
 			}
@@ -334,46 +392,6 @@ async fn handle_socket(
 			}
 		}
 	}
-	info!("Reuniting socket");
-	let socket = tx_socket.reunite(rx_socket).unwrap();
-	// if (!already_closed) {
-	if let Err(err) = socket.close().await {
-		error!("Closing socket failed {:?} with {}", err, user);
-	} else {
-		info!("Closed socket with {}", user)
-	};
-	// };
-}
 
-use diff::Result::*;
-fn diff_calc(left: &str, right: &str) -> Vec<String> {
-	let diffs = diff::lines(left, right);
-	// SO it'll be ["B44", ""]
-	let out: Vec<String> = diffs.iter().fold(vec![], |mut acc, v| {
-		match *v {
-			Left(_l) => {
-				if acc.last().and_then(|v| Some(v.starts_with("D"))) == Some(true) {
-					// Add 1
-					*acc.last_mut().unwrap() = format!("D{}", (&acc.last().unwrap()[1..].parse::<u32>().unwrap() + 1));
-				} else {
-					acc.push("D1".to_string());
-				}
-			}
-			Both(_, _) => {
-				if acc.last().and_then(|v| Some(v.starts_with("K"))) == Some(true) {
-					// Add 1
-					*acc.last_mut().unwrap() = format!("K{}", (&acc.last().unwrap()[1..].parse::<u32>().unwrap() + 1));
-				} else {
-					acc.push("K1".to_string());
-				}
-			}
-			Right(l) => {
-				acc.push(format!("A{}", l));
-			}
-		}
-		acc
-	});
-	// info!("{out:?}");
-	// println!("{diffs:?}");
-	out
+	info!("Closed socket with {user} on {address}");
 }

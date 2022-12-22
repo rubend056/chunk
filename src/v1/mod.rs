@@ -9,7 +9,8 @@ use self::{
 };
 
 pub mod auth;
-pub mod chunk;
+// pub mod chunk;
+pub mod format;
 pub mod db;
 pub mod ends;
 pub mod js_deno;
@@ -58,7 +59,7 @@ pub async fn init() -> DB {
 }
 pub async fn save(db: &DB) {
 	if let Some(db_path) = DB_PATH.clone() {
-		let dbdata = DBData::new(db);
+		let dbdata = DBData::from(db);
 		let data = serde_json::to_string(&dbdata).unwrap();
 		match fs::write(&db_path, &data) {
 			Ok(()) => info!("Saved {} chunks on {}", dbdata.chunks.len(), db_path),
@@ -73,15 +74,3 @@ pub async fn save(db: &DB) {
 		};
 	}
 }
-
-// #[cfg(test)]
-// mod tests {
-
-// 	#[test]
-// 	fn d() {
-// 		// let db = init().await;
-// 		// let c = db.get_chunk(Some("rubend".into()), &"tutorial".into());
-// 		// println!("{c:?}");
-// 		// assert!()
-// 	}
-// }

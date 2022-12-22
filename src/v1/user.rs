@@ -18,7 +18,6 @@ impl User {
 	fn _verify(&self, pass: &str) -> bool {
 		// PHC string -> PasswordHash.
 		let parsed_hash = PasswordHash::new(&self.pass).expect("Error parsing existing password field");
-		// parsed_hash.salt.expect("Salt must exist");
 
 		// Compare pass hash vs PasswordHash
 		if let Err(_) = Argon2::default().verify_password(pass.as_bytes(), &parsed_hash) {
@@ -26,7 +25,7 @@ impl User {
 		};
 		true
 	}
-	fn _gen(pass: &str) -> Result<String, DbError> {
+	fn hash(pass: &str) -> Result<String, DbError> {
 		if !REGEX_PASSWORD.is_match(pass) {
 			return Err(DbError::InvalidPassword);
 		}
@@ -41,7 +40,7 @@ impl User {
 
 		Ok(User {
 			user: user.into(),
-			pass: User::_gen(&pass)?,
+			pass: User::hash(&pass)?,
 			not_before: get_secs(),
 		})
 	}
@@ -57,7 +56,7 @@ impl User {
 		if !self._verify(old_pass) {
 			return Err(DbError::AuthError);
 		}
-		self.pass = User::_gen(pass)?;
+		self.pass = User::hash(pass)?;
 		self.not_before = get_secs();
 
 		Ok(())

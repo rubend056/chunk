@@ -4,10 +4,9 @@ use log::error;
 use serde::Serialize;
 
 use crate::{
-	utils::{gen_proquint, get_secs, DbError},
-	v0::structs,
+	utils::{gen_proquint, get_secs, DbError, standardize},
 	v1::{
-		chunk::{standardize, Access, Chunk, ChunkMeta, UserAccess, UserRef},
+		chunk::{Access, Chunk, ChunkMeta, UserAccess, UserRef},
 		user::User,
 	},
 };
@@ -68,26 +67,6 @@ impl DB {
 			.and_then(|u| Some(u.to_owned()))
 			.ok_or(DbError::NotFound)
 	}
-	// pub fn remove_user(&mut self, user: String, _pass: String) -> Result<(), DbError> {
-	// 	if let Some(_user_instance) = self.users.get(&user) {
-	// 		if user == "public" {
-	// 			return Err(DbError::InvalidUser);
-	// 		}
-	// 	}else {
-	// 		return Err(DbError::AuthError);
-	// 	}
-
-	// 	// ! NOT IMPLEMENTED
-	// 	// self.users.insert(user.clone(), user_instance);
-	// 	// {
-	// 	// 	// New user setup
-	// 	// 	if let Ok(chunk) = self.get_chunk(Some("rubend".into()), &"tutorial".into()){
-	// 	// 		self.set_chunk(&user, (None, chunk.value))?;
-	// 	// 	}
-	// 	// }
-
-	// 	Ok(())
-	// }
 	pub fn login(&self, user: &str, pass: &str) -> Result<(), DbError> {
 		let user = self.users.get(user).ok_or(DbError::AuthError)?;
 		if !user.verify(&pass) {
@@ -131,7 +110,14 @@ impl DB {
 						}
 						None => meta._refs.is_empty()
 						// Return if all this chunk points to is stuff this user can't read
-						|| _refs.iter().all(|v| self.ref_id.get(&v.1).and_then(|v| Some(v.iter().all(|id| {let (c,m) = &self.chunks[id];c.owner != chunk.owner && !m.access.contains(user_access)}))).or(Some(false)).unwrap()),
+						|| _refs.iter().all(|v| 
+							self.ref_id.get(&v.1).and_then(|v| 
+								Some(v.iter().all(|id| {
+									let (c,m) = &self.chunks[id];
+									c.owner != chunk.owner && !m.access.contains(user_access)
+								}))).or(Some(false))
+								.unwrap()
+							),
 					}}
 			})
 			.map(|(_, (chunk, meta))| {
@@ -190,6 +176,10 @@ impl DB {
 			_ => Ok((self.iter_tree(&(user, Access::Read), None, depth.unwrap_or(0)), vec![])),
 		}
 	}
+	
+	// pub fn get_chunks2()
+	
+	
 	pub fn get_notes(&self, user: &str) -> Vec<ChunkView> {
 		let access = (user.to_owned(), Access::Read);
 		self.chunks.iter().fold(vec![], |mut acc, (_, (chunk, meta))| {
@@ -213,21 +203,21 @@ impl DB {
 		owner: Option<&String>,
 	) -> Option<(&Chunk, &ChunkMeta)> {
 		let user_ref = (user_ref.0.as_ref().or(owner), &user_ref.1);
-		self
-			.ref_id
-			.get(user_ref.1)
-			.and_then(|ids| {
-				ids.iter().find_map(|id| {
-					self.chunks.get(id).and_then(|(c, m)| {
-						if Some(&c.owner) == user_ref.0 {
-							Some((c, m))
-						} else {
-							None
-						}
+		self.chunks.get(user_ref.1).and_then(|(c, m)| Some((c, m)))
+			.or_else(|| self
+				.ref_id
+				.get(user_ref.1)
+				.and_then(|ids| {
+					ids.iter().find_map(|id| {
+						self.chunks.get(id).and_then(|(c, m)| {
+							if Some(&c.owner) == user_ref.0 {
+								Some((c, m))
+							} else {
+								None
+							}
+						})
 					})
-				})
-			})
-			.or_else(|| self.chunks.get(user_ref.1).and_then(|(c, m)| Some((c, m))))
+				}))
 	}
 	fn _get_chunk_from_id_or_ref(&self, id_or_ref: &String) -> Option<&(Chunk, ChunkMeta)> {
 		self.chunks.get(id_or_ref).or_else(|| {
@@ -336,7 +326,9 @@ impl DB {
 				}
 
 				// Create new chunk
-				let chunk = Chunk::new(id.clone(), value, user.into())?;
+				let chunk = Chunk{
+					id, value, owner:user.into(), ..Default::default()
+				};
 
 				let users = HashSet::from_iter(
 					meta_new
@@ -353,7 +345,7 @@ impl DB {
 					.and_modify(|v| v.push(chunk.id.to_owned()))
 					.or_insert(vec![chunk.id.to_owned()]);
 
-				self.chunks.insert(id, (chunk.clone(), meta_new));
+				self.chunks.insert(chunk.id.clone(), (chunk.clone(), meta_new));
 
 				// Respond
 				Ok((chunk, users, HashSet::from([user.into()])))

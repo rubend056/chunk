@@ -1,5 +1,6 @@
 // #![feature(is_some_and)]
 // #![feature(map_many_mut)]
+// #![allow(dead_code)]
 
 use axum::{
 	extract::DefaultBodyLimit,
@@ -29,7 +30,6 @@ use utils::{get_secs, CACHE_PATH, DB_BACKUP_FOLDER, SECS_IN_DAY};
 use v1::{db::DBData, socket::websocket_handler};
 
 mod utils;
-mod v0;
 mod v1;
 
 use crate::{
@@ -57,26 +57,28 @@ async fn main() {
 
 	// Build router
 	let app = Router::new()
+		.route("/page/:id", get(page_get_id))
 		.nest(
 			"/api",
 			Router::new()
 				.route("/chunks", get(chunks_get).put(chunks_put).delete(chunks_del))
-				.route("/well", get(well_get))
-				.route("/well/:id", get(well_get))
+				// .route("/well", get(well_get))
+				// .route("/well/:id", get(well_get))
 				.route_layer(axum::middleware::from_fn(auth::auth_required))
 				.route("/chunks/:id", get(chunks_get_id))
 				.route("/stream", get(websocket_handler))
 				.route("/user", get(auth::user))
 				.route("/media", post(media_post))
 				.route("/media/:id", get(media_get))
+				// Allow only signed in users past this point
 				.route_layer(axum::middleware::from_fn(auth::public_only_get))
-				// User authentication, provider of UserClaims
-				.route_layer(axum::middleware::from_fn(auth::authenticate))
 				.route("/login", post(auth::login))
 				.route("/reset", post(auth::reset))
 				.route("/register", post(auth::register))
 				.route("/mirror/:bean", get(mirror_bean)),
 		)
+		// User authentication, provider of UserClaims
+		.route_layer(axum::middleware::from_fn(auth::authenticate))
 		.merge(SpaRouter::new("/web", WEB_DIST.clone()))
 		.layer(
 			tower::ServiceBuilder::new()
@@ -129,24 +131,30 @@ async fn main() {
 
 	info!("Joined workers, apparently they've shutdown");
 
-	let _db = db.clone();
-	if let Ok(db) = Arc::try_unwrap(db) {
-		let db = db.into_inner().unwrap();
-		v1::save(&db).await;
-	} else {
-		error!("Couldn't unwrap DB, will save anyways, but beware of this");
-		v1::save(&_db.read().unwrap()).await;
+	match Arc::try_unwrap(db) {
+		Ok(db) => {
+			let db = db.into_inner().unwrap();
+			v1::save(&db).await;
+		}
+		Err(db) => {
+			error!("Couldn't unwrap DB, will save anyways, but beware of this");
+			v1::save(&db.read().unwrap()).await;
+		}
 	}
 
 	deinit_cache(&cache.read().unwrap());
 }
 
 fn log_env() {
-	let j = env::vars()
-		.filter(|(k, _)| k.contains("REGEX_") || k.contains("DB_") || k == "HOST" || k == "WEB_DIST")
-		.collect::<Vec<_>>();
-
-	info!("{j:?}");
+	let j = env::vars().filter(|(k, _)| k.contains("REGEX_") || k.contains("DB_") || k == "HOST" || k == "WEB_DIST");
+	j.for_each(|(k, v)| println!("{k}: {v}"));
+	// info!(
+	// 	"{:?}",
+	// 	j.fold("\n".to_string(), |mut acc, (k, v)| {
+	// 		acc.push_str(&format!("{k}:{v}\n"));
+	// 		acc
+	// 	})
+	// );
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -201,7 +209,8 @@ async fn backup_service(cache: Arc<RwLock<Cache>>, db: DB, mut shutdown_rx: watc
 				"{}.json",
 				(secs / SECS_IN_DAY) - (365 * 51) /*Closest number to days since EPOCH to lower that to something more readable */
 			));
-			let dbdata = serde_json::to_string(&DBData::new(&db.read().unwrap())).unwrap();
+
+			let dbdata = serde_json::to_string(&DBData::from(&*db.read().unwrap())).unwrap();
 
 			if let Err(err) = fs::write(&backup_file, &dbdata) {
 				error!("Couldn't backup to: {err:?}");

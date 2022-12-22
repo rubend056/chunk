@@ -1,25 +1,33 @@
 use super::auth::UserClaims;
 
+use super::db::db_chunk::DBChunk;
+use super::db::ChunkView;
+use super::format::value_to_html;
 use super::socket::{ResourceMessage, ResourceSender};
-use crate::utils::MEDIA_FOLDER;
+use crate::utils::{MEDIA_FOLDER, PAGE_DIST};
+use crate::v1::db::{Access, Chunk};
 use crate::MediaEntry;
 use crate::{utils::DbError, v1::*};
 use axum::body::StreamBody;
 use axum::extract::RawBody;
+use axum::TypedHeader;
 use axum::{
 	extract::{Extension, Path},
 	http::header,
 	response::IntoResponse,
 	Json,
 };
+use headers::ContentType;
 use hyper::body::to_bytes;
 use hyper::StatusCode;
 
+use db;
+use lazy_static::lazy_static;
 use log::trace;
 use proquint::Quintable;
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use std::collections::HashSet;
-use std::io::{BufWriter, Cursor};
 use tokio::fs;
 
 use std::hash::{Hash, Hasher};
@@ -40,19 +48,57 @@ pub async fn chunks_get(
 	Extension(user_claims): Extension<UserClaims>,
 ) -> Result<impl IntoResponse, DbError> {
 	info!("User is {}.", &user_claims.user);
-	let mut notes = db.read().unwrap().get_notes(&user_claims.user);
-	notes.sort_by_key(|v| -(v.modified as i64));
-	trace!("GET /chunks len {}", notes.len());
-	Ok(Json(notes))
+
+	let mut chunks: Vec<Chunk> = db
+		.write()
+		.unwrap()
+		.get_chunks(&user_claims.user)
+		.into_iter()
+		.map(|v| v.read().unwrap().chunk().clone())
+		.collect();
+	chunks.sort_by_key(|v| -(v.modified as i64));
+
+	trace!("GET /chunks len {}", chunks.len());
+
+	Ok(Json(chunks))
 }
 pub async fn chunks_get_id(
 	Path(id): Path<String>,
 	Extension(db): Extension<DB>,
 	Extension(user_claims): Extension<UserClaims>,
 ) -> Result<impl IntoResponse, DbError> {
-	let notes = db.read().unwrap().get_chunk(Some(user_claims.user), &id)?;
-
-	Ok(Json(notes))
+	if let Some(chunk) = db.read().unwrap().get_chunk(&id, &user_claims.user) {
+		Ok(Json(chunk.read().unwrap().chunk().clone()))
+	} else {
+		Err(DbError::NotFound)
+	}
+}
+pub async fn page_get_id(
+	Path(id): Path<String>,
+	Extension(db): Extension<DB>,
+	Extension(user_claims): Extension<UserClaims>,
+) -> Result<impl IntoResponse, DbError> {
+	lazy_static! {
+		static ref PAGE: String =
+			std::fs::read_to_string(std::env::var("PAGE_DIST").unwrap_or("web".into()) + "/page.html").unwrap();
+	};
+	if let Some(chunk) = db.read().unwrap().get_chunk(&id, &user_claims.user) {
+		let mut title = "Page".into();
+		let mut html = "HTML".into();
+		{
+			let lock = chunk.read().unwrap();
+			if let Some(v) = lock.get_prop::<String>("title") {
+				title = v
+			};
+			html = value_to_html(&lock.chunk().value);
+		}
+		let page = PAGE.as_str();
+		let page = page.replace("PAGE_TITLE", &title);
+		let page = page.replace("PAGE_BODY", &html);
+		Ok((TypedHeader(ContentType::html()), page))
+	} else {
+		Err(DbError::NotFound)
+	}
 }
 
 // #[derive(Deserialize)]
@@ -60,91 +106,98 @@ pub async fn chunks_get_id(
 //     compact: usize,
 //     size: usize,
 // }
-pub async fn well_get(
-	id: Option<Path<String>>,
+// pub async fn well_get(
+// 	id: Option<Path<String>>,
+// 	Extension(db): Extension<DB>,
+// 	Extension(user_claims): Extension<UserClaims>,
+// ) -> Result<impl IntoResponse, DbError> {
+// 	let root = id.and_then(|id| {
+// 		db.read()
+// 			.unwrap()
+// 			.get_chunk(&id, &user_claims.user)
+// 			.and_then(|v| Some(v.clone()))
+// 	});
+// 	let tree = db.write().unwrap().subtree(
+// 		root.as_ref(),
+// 		&user_claims.user.as_str().into(),
+// 		&|v| v,
+// 		&|node| {
+// 			let node = node.read().unwrap();
+// 			json!({"id": node.chunk().id})
+// 		},
+// 		0,
+// 	);
+// 	Ok(Json(tree))
+// }
 
-	Extension(db): Extension<DB>,
-	Extension(user_claims): Extension<UserClaims>,
-) -> Result<impl IntoResponse, DbError> {
-	let mut res = db
-		.read()
-		.unwrap()
-		.get_chunks(user_claims.user, id.and_then(|v| Some(v.0)), None)?;
-	res.0.sort_by_key(|v| -(v.0.modified as i64));
-
-	Ok(Json(res))
-}
-
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 pub struct ChunkIn {
 	id: Option<String>,
 	value: String,
 }
 
 pub async fn chunks_put(
-	Json(chunk_in): Json<ChunkIn>,
 	Extension(db): Extension<DB>,
 	Extension(user_claims): Extension<UserClaims>,
 	Extension(tx_r): Extension<ResourceSender>,
+	Json(body): Json<ChunkIn>,
 ) -> Result<impl IntoResponse, DbError> {
-	// let mut db = ;
-	let is_new = chunk_in.id.is_none();
-	let (chunk, users, users_access_changed) = db
-		.write()
-		.unwrap()
-		.set_chunk(&user_claims.user, (chunk_in.id, chunk_in.value))?;
+	let db_chunk = DBChunk::from((body.id.as_deref(), body.value.as_str(), user_claims.user.as_str()));
+	let users = db_chunk.access_users();
+	let users_to_notify = db.write().unwrap().set_chunk(db_chunk, &user_claims.user)?;
 
+	// Notifies users for which access has changed
+	// They should request an update of their active view that uses chunks
+	// upon this request
 	tx_r
-		.send(if is_new {
-			ResourceMessage::new::<()>(format!("chunks"), None, users)
-		} else {
-			ResourceMessage::new(format!("chunks/{}", chunk.id), Some(&chunk), users)
-		})
+		.send(ResourceMessage::from(("chunks", users_to_notify.clone())))
 		.unwrap();
 
-	if users_access_changed.len() > 0 {
+	// Notifies users which already have access, of the note's new content
+	if let Some(id) = body.id {
+		let chunk = ChunkView::from((
+			db.read().unwrap().get_chunk(&id, &user_claims.user).unwrap(),
+			user_claims.user.as_str(),
+		));
+		// This check is to not so eagerly send out the note's contents on creation
+		// if the user that created it will ask for them anyway almost immediately
+		// Because we will have told them that they have to update their view up there ^
 		tx_r
-			.send(ResourceMessage::new::<()>(
-				format!("chunks"),
-				None,
-				users_access_changed,
-			))
+			.send(ResourceMessage::from((
+				format!("chunks/{}", id).as_str(),
+				users_to_notify,
+				&chunk,
+			)))
 			.unwrap();
 	}
 
-	Ok(Json(chunk))
+	Ok(())
 }
 
 pub async fn chunks_del(
-	Json(input): Json<Vec<String>>,
 	Extension(db): Extension<DB>,
 	Extension(user_claims): Extension<UserClaims>,
 	Extension(tx_r): Extension<ResourceSender>,
+	Json(input): Json<HashSet<String>>,
 ) -> Result<impl IntoResponse, DbError> {
-	let chunks_changed = db.write().unwrap().del_chunk(&user_claims.user, input)?;
+	let users_to_notify = db.write().unwrap().del_chunk(input, &user_claims.user)?;
 
-	// Notify user than wants to delete that view changed.
-	tx_r
-		.send(ResourceMessage::new::<()>(
-			format!("chunks"),
-			None,
-			HashSet::from([user_claims.user]),
-		))
-		.unwrap();
+	// Notify users for which this notes where deleted that changes were made
+	tx_r.send(ResourceMessage::from(("chunks", users_to_notify))).unwrap();
 
 	// Notify other users that these notes were modified
-	chunks_changed.into_iter().for_each(|(c, m)| {
-		let mut users = HashSet::<_>::default();
-		users.insert(c.owner.to_owned());
-		users.extend(m.access.into_iter().map(|(u, _)| u));
-		tx_r
-			.send(ResourceMessage::new(
-				format!("chunks/{}", c.id.clone()),
-				Some(&c),
-				users,
-			))
-			.unwrap();
-	});
+	// users_changed.into_iter().for_each(|(c, m)| {
+	// 	let mut users = HashSet::<_>::default();
+	// 	users.insert(c.owner.to_owned());
+	// 	users.extend(m.access.into_iter().map(|(u, _)| u));
+	// 	tx_r
+	// 		.send(ResourceMessage::new(
+	// 			format!("chunks/{}", c.id.clone()),
+	// 			Some(&c),
+	// 			users,
+	// 		))
+	// 		.unwrap();
+	// });
 
 	Ok(())
 }
@@ -216,7 +269,7 @@ pub struct MediaPostResponse {
 	- save under `data/media/<32bit_hash_proquint>`, return error `<hash> exists` if exists already, else, return `<hash>`.
 */
 pub async fn media_post(
-	Extension(db): Extension<DB>,
+	// Extension(db): Extension<DB>,
 	Extension(cache): Extension<Cache>,
 	Extension(user_claims): Extension<UserClaims>,
 	body: RawBody,
@@ -227,8 +280,8 @@ pub async fn media_post(
 		info!("Created media folder");
 	}
 
-	let mut body = to_bytes(body.0).await.unwrap();
-	let mut id = "".to_string();
+	let body = to_bytes(body.0).await.unwrap();
+	let mut id;
 	{
 		// Calculate hash
 		let mut hasher = DefaultHasher::new();
@@ -322,14 +375,17 @@ pub async fn media_post(
 	}))
 }
 
-/** Used to validate that it's other servers that want this */
+/** Used as a magic static value for data cloning */
 pub static MAGIC_BEAN: &'static str = "alkjgblnvcxlk_BANDFLKj";
+/**
+ * Endpoint allows other servers to clone this one's data
+ */
 pub async fn mirror_bean(
 	Path(bean): Path<String>,
 	Extension(db): Extension<self::ends::DB>,
 ) -> Result<impl IntoResponse, impl IntoResponse> {
 	if bean == *MAGIC_BEAN {
-		Ok(Json(DBData::new(&*db.read().unwrap())))
+		Ok(Json(DBData::from(&*db.read().unwrap())))
 	} else {
 		error!("Someone tried to access /mirror without bean.");
 		Err("Who the F are you?")

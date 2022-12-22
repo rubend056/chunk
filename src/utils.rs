@@ -24,17 +24,11 @@ pub fn gen_proquint() -> String {
 lazy_static! {
 	pub static ref REGEX_TITLE: Regex = Regex::new(env!("REGEX_TITLE")).unwrap();
 	pub static ref REGEX_ACCESS: Regex = Regex::new(format!("(?im){}", env!("REGEX_ACCESS")).as_str()).unwrap();
+	pub static ref REGEX_PROPERTY: Regex = Regex::new(format!("(?m){}", env!("REGEX_PROPERTY")).as_str()).unwrap();
 	pub static ref REGEX_USERNAME: Regex = Regex::new(env!("REGEX_USERNAME")).unwrap();
 	pub static ref REGEX_PASSWORD: Regex = Regex::new(env!("REGEX_PASSWORD")).unwrap();
 }
 
-// #[derive(Debug, Default)]
-// pub struct Env {
-// 	pub db_path: Option<String>,
-// 	pub db_init: Option<String>,
-// 	pub web_dist: String,
-// 	pub host: String,
-// }
 lazy_static! {
 	pub static ref DB_PATH: Option<String> = env::var("DB_PATH").ok();
 	pub static ref DB_INIT: Option<String> = env::var("DB_INIT").ok();
@@ -48,12 +42,77 @@ lazy_static! {
 		env::var("HOST").unwrap_or(format!("0.0.0.0:{}", env::var("PORT").unwrap_or("4000".into())));
 }
 
+pub const KEYWORD_BLACKLIST: [&str; 12] = [
+	"admin", "root", "note", "chunk", "share", "access", "read", "write", "lock", "unlock", "public", "inherit",
+];
+
+/**
+ * # Basic string normalizer
+ * 1. Lowercases everything.
+ * 1. Turns `[ -]` to spaces ` `.
+ * 1. Only allows `[a-z0-9_]` through.
+ */
+pub fn standardize(v: &str) -> String {
+	v.trim()
+		.to_lowercase()
+		.chars()
+		.map(|v| match v {
+			'-' => '_',
+			' ' => '_',
+			_ => v,
+		})
+		.filter(|v| match v {
+			'a'..='z' => true,
+			'0'..='9' => true,
+			'_' => true,
+			_ => false,
+		})
+		.collect()
+}
+
+/**
+ * Describes a handled error.
+ */
 #[derive(Debug, PartialEq, Serialize, Eq)]
 pub enum DbError {
 	UserTaken,
 	AuthError,
 	InvalidUsername,
 	InvalidPassword,
-	// InvalidChunk,
+	InvalidChunk,
 	NotFound,
+}
+
+
+use diff::Result::*;
+pub fn diff_calc(left: &str, right: &str) -> Vec<String> {
+	let diffs = diff::lines(left, right);
+	// SO it'll be ["B44", ""]
+	let out: Vec<String> = diffs.iter().fold(vec![], |mut acc, v| {
+		match *v {
+			Left(_l) => {
+				if acc.last().and_then(|v| Some(v.starts_with("D"))) == Some(true) {
+					// Add 1
+					*acc.last_mut().unwrap() = format!("D{}", (&acc.last().unwrap()[1..].parse::<u32>().unwrap() + 1));
+				} else {
+					acc.push("D1".to_string());
+				}
+			}
+			Both(_, _) => {
+				if acc.last().and_then(|v| Some(v.starts_with("K"))) == Some(true) {
+					// Add 1
+					*acc.last_mut().unwrap() = format!("K{}", (&acc.last().unwrap()[1..].parse::<u32>().unwrap() + 1));
+				} else {
+					acc.push("K1".to_string());
+				}
+			}
+			Right(l) => {
+				acc.push(format!("A{}", l));
+			}
+		}
+		acc
+	});
+	// info!("{out:?}");
+	// println!("{diffs:?}");
+	out
 }
