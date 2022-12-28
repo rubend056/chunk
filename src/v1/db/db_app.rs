@@ -1,4 +1,4 @@
-use super::{db_auth::DBAuth, db_chunk::DBChunk, Access, DBData, GraphView, UserAccess, DB};
+use super::{db_auth::DBAuth, db_chunk::DBChunk, Access, Chunk, DBData, GraphView, UserAccess, DB};
 use crate::utils::{diff_calc, DbError};
 use lazy_static::lazy_static;
 /**
@@ -124,24 +124,20 @@ impl DB {
 	 * Receives a Chunk which it validates & links, returns the list of users for which access changed
 	 */
 	pub fn set_chunk(&mut self, mut chunk: DBChunk, user: &str) -> Result<HashSet<String>, DbError> {
-		let id;
 		let diff_users;
 		let diff_props;
 		if let Some(chunk_old) = self.chunks.get(&chunk.chunk().id).and_then(|v| Some(v.clone())) {
 			// Updating
 			let chunk_old = chunk_old.write().unwrap();
-			// Make new chunk's owner same as last
-			chunk.set_owner(chunk_old.chunk().owner.to_owned());
+
 			// Perform update check
-			if !chunk_old.can_update(&chunk, user) {
+			if !chunk_old.try_update(&mut chunk, user) {
 				return Err(DbError::AuthError);
 			}
-			// Copy children from old to new
-			chunk.children = chunk_old.children.clone();
+
 			// Find diff, link and insert
 			diff_users = chunk_old.access_diff(Some(&chunk));
 			diff_props = chunk_old.props_diff(Some(&chunk));
-			id = chunk.chunk().id.clone();
 		} else {
 			// Creating
 			// If creating a chunk, user has to be same as Chunk owner
@@ -150,15 +146,14 @@ impl DB {
 			// Find diff, link and insert
 			diff_users = chunk.access_diff(None);
 			diff_props = chunk.props_diff(None);
-			id = chunk.chunk().id.clone();
 		}
 
+		let id = chunk.chunk().id.clone();
 		let chunk = Arc::new(RwLock::new(chunk));
 		self.link_chunk(&chunk, None)?;
 		{
 			let mut chunk = chunk.write().unwrap();
 			chunk.invalidate(&vec!["modified".into()], true);
-			// diff_props.into_iter().for_each(|k| chunk.invalidate(k, up))
 		}
 
 		self.chunks.insert(id, chunk);
@@ -168,19 +163,21 @@ impl DB {
 	/**
 	 *
 	 */
-	pub fn update_chunk_with_diff(
+	pub fn update_chunk(
 		&mut self,
 		chunk: DBChunk,
 		user: &str,
-	) -> Result<(HashSet<String>, Vec<String>), DbError> {
+	) -> Result<(HashSet<String>, Vec<String>, Arc<RwLock<DBChunk>>), DbError> {
 		if let Some(last_value) = self
 			.get_chunk(&chunk.chunk().id, user)
 			.and_then(|v| Some(v.read().unwrap().chunk().value.to_owned()))
 		{
 			let value = chunk.chunk().value.clone();
+			let id = chunk.chunk().id.clone();
 			let users_to_notify = self.set_chunk(chunk, user)?;
 			let diff = diff_calc(&last_value, &value);
-			return Ok((users_to_notify, diff));
+			let db_chunk = self.get_chunk(&id, user).unwrap();
+			return Ok((users_to_notify, diff, db_chunk));
 		}
 		Err(DbError::NotFound)
 	}
@@ -318,7 +315,7 @@ mod tests {
 
 	use serde_json::{json, Value};
 
-	use crate::v1::db::{db_chunk::DBChunk, Access, Chunk, ChunkId, ChunkView};
+	use crate::v1::db::{db_chunk::DBChunk, Access, Chunk, ChunkId, ChunkView, ViewType};
 
 	use super::DB;
 	#[test]
@@ -333,6 +330,41 @@ mod tests {
 			Ok(HashSet::from(["john".into()]))
 		);
 	}
+	/// Create a "Notes"
+	/// Modify "Notes" 10 sec after
+	/// Assert that Modify is 10 sec after Created.
+	#[test]
+	fn created_modified() {
+		let mut db = DB::default();
+
+		let c_notes: DBChunk = "# Notes\n".into();
+		let cre_notes = c_notes.chunk().created;
+
+		let id_notes = c_notes.chunk().id.clone();
+		db.set_chunk(c_notes, "john").unwrap();
+
+		let mut c_notes: Chunk = (id_notes.as_str(), "# Notes\n").into();
+		c_notes.created += 10;
+		c_notes.modified += 10;
+		let mod_notes = c_notes.modified;
+		db.set_chunk(DBChunk::from(c_notes), "john").unwrap();
+
+		let notes = db.get_chunk(&id_notes, "john").unwrap();
+		{
+			let chunk_notes = notes.read().unwrap();
+			assert_eq!(chunk_notes.chunk().created, cre_notes);
+			assert_eq!(chunk_notes.chunk().modified, mod_notes);
+		}
+
+		{
+			let view = ChunkView::from((notes, "john", ViewType::Edit));
+			assert_eq!(view.created, Some(cre_notes));
+			assert_eq!(view.modified, Some(mod_notes));
+		}
+	}
+	/// Create a "Notes"
+	/// Create a "Note1 -> Notes" with modified 10 sec after
+	/// Assert that Dynamic Modified on Notes = Note1's modify time (10 sec after)
 	#[test]
 	fn dynamic_modified() {
 		let mut db = DB::default();

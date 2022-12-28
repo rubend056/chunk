@@ -2,7 +2,8 @@ use lazy_static::lazy_static;
 use proquint::Quintable;
 use rand::prelude::*;
 use regex::Regex;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use std::{
 	env,
 	time::{SystemTime, UNIX_EPOCH},
@@ -83,8 +84,9 @@ pub enum DbError {
 	NotFound,
 }
 
-
 use diff::Result::*;
+
+use crate::v1::db::ViewType;
 pub fn diff_calc(left: &str, right: &str) -> Vec<String> {
 	let diffs = diff::lines(left, right);
 	// SO it'll be ["B44", ""]
@@ -116,3 +118,50 @@ pub fn diff_calc(left: &str, right: &str) -> Vec<String> {
 	// println!("{diffs:?}");
 	out
 }
+
+// /// Has to return something that's easy to merge into current data
+// /// Easiest thing to merge would be index + data. Assuming iteration of front+back is same
+// #[derive(Serialize, Default)]
+// pub struct Page<T> {
+// 	pub start_i: Option<usize>,
+// 	pub start_id: Option<usize>,
+// 	pub size: usize,
+// 	pub data: Vec<T>,
+// }
+
+// #[derive(Deserialize, Default)]
+// #[serde(default)]
+// pub struct PageQuery {
+// 	pub index: Option<usize>,
+// 	pub page_size: Option<usize>,
+// }
+// impl PageQuery {
+// 	pub fn is_empty(&self) -> bool {
+// 		self.index.is_none() && self.page_size.is_none()
+// 	}
+// }
+
+
+// pub fn maybe_paginate<T, E: Serialize, I: IntoIterator<Item = T>, F: Fn(T) -> E>(
+// 	(query, iter, map): (&PageQuery, I, &F),
+// ) -> Value {
+// 	let iter = iter.into_iter();
+// 	if !query.is_empty() {
+// 		let page = query.index.unwrap();
+// 		let page_size = query.page_size.unwrap();
+// 		let items = iter
+// 			.skip(page * page_size)
+// 			.take(query.page_size.unwrap())
+// 			.map(map)
+// 			.collect();
+// 		let page = Page {
+// 			start_at: page,
+// 			size: page_size,
+// 			data: items,
+// 		};
+// 		json!(page)
+// 	} else {
+// 		let items = iter.map(map).collect::<Vec<_>>();
+// 		json!(items)
+// 	}
+// }

@@ -29,7 +29,7 @@ pub fn value_transform(value: &str) -> String {
 				"(/api/media/$1)"
 			),
 			(
-				Regex::new(concat!(r"\(chunk/(", env!("REGEX_PROQUINT"), r")\)")).unwrap(),
+				Regex::new(concat!(r"\(chunks?/(", env!("REGEX_PROQUINT"), r")\)")).unwrap(),
 				"(/page/$1)"
 			),
 		];

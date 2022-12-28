@@ -39,7 +39,8 @@ use self::db_chunk::DBChunk;
 #[derive(Serialize, Debug, Default)]
 pub struct ChunkView {
 	pub id: String,
-	pub owner: String,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub owner: Option<String>,
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub value: Option<String>,
 	#[serde(skip_serializing_if = "Option::is_none")]
@@ -52,12 +53,15 @@ pub struct ChunkView {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub props_dynamic: Option<Value>,
 
-	pub parents: usize,
-	pub children: usize,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub parents: Option<usize>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub children: Option<usize>,
 
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub access: Option<Access>,
 }
+
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum ViewType {
 	Edit,
@@ -107,12 +111,12 @@ impl From<(&Arc<RwLock<DBChunk>>, &str, ViewType)> for ChunkView {
 
 					value: Some(value_short(&db_chunk)),
 
-					owner: db_chunk.chunk().owner.clone(),
+					owner: Some(db_chunk.chunk().owner.clone()),
 					modified: Some(db_chunk.chunk().modified),
 					created: Some(db_chunk.chunk().created),
 
-					parents: db_chunk.parents(Some(&user.into())).len(),
-					children: db_chunk.children(Some(&user.into())).len(),
+					parents: Some(db_chunk.parents(Some(&user.into())).len()),
+					children: Some(db_chunk.children(Some(&user.into())).len()),
 
 					access: db_chunk
 						.highest_access(user)
@@ -126,21 +130,19 @@ impl From<(&Arc<RwLock<DBChunk>>, &str, ViewType)> for ChunkView {
 					props: Some(Value::Object(Map::from_iter(db_chunk.props()))),
 					props_dynamic: Some(Value::Object(Map::from_iter(db_chunk.props_dynamic(&user.into())))),
 
-					parents: db_chunk.parents(Some(&user.into())).len(),
-					children: db_chunk.children(Some(&user.into())).len(),
+					parents: Some(db_chunk.parents(Some(&user.into())).len()),
+					children: Some(db_chunk.children(Some(&user.into())).len()),
 					..Default::default()
 				},
 				ViewType::Notes => Self {
 					id: db_chunk.chunk().id.clone(),
 					modified: Some(db_chunk.chunk().modified),
 
-					props: Some(Value::Object(Map::from_iter(db_chunk.props()))),
-					props_dynamic: Some(Value::Object(Map::from_iter(db_chunk.props_dynamic(&user.into())))),
-
+					// props: Some(Value::Object(Map::from_iter(db_chunk.props()))),
+					// props_dynamic: Some(Value::Object(Map::from_iter(db_chunk.props_dynamic(&user.into())))),
 					value: Some(value_short(&db_chunk)),
 
-					children: db_chunk.children(Some(&user.into())).len(),
-
+					// children: db_chunk.children(Some(&user.into())).len(),
 					access: db_chunk
 						.highest_access(user)
 						.and_then(|a| if a == Access::Owner { None } else { Some(a) }),
@@ -150,15 +152,15 @@ impl From<(&Arc<RwLock<DBChunk>>, &str, ViewType)> for ChunkView {
 					id: db_chunk.chunk().id.clone(),
 					props: Some(Value::Object(Map::from_iter(db_chunk.props()))),
 					props_dynamic: Some(Value::Object(Map::from_iter(db_chunk.props_dynamic(&user.into())))),
-					value: Some(db_chunk.chunk().value.clone()),
-					owner: db_chunk.chunk().owner.clone(),
-					parents: db_chunk.parents(Some(&user.into())).len(),
-					children: db_chunk.children(Some(&user.into())).len(),
+					// value: Some(db_chunk.chunk().value.clone()),
+					owner: Some(db_chunk.chunk().owner.clone()),
+					parents: Some(db_chunk.parents(Some(&user.into())).len()),
+					children: Some(db_chunk.children(Some(&user.into())).len()),
 					modified: Some(db_chunk.chunk().modified),
 					created: Some(db_chunk.chunk().created),
-					access: db_chunk
-						.highest_access(user)
-						.and_then(|a| if a == Access::Owner { None } else { Some(a) }),
+					// access: db_chunk
+					// 	.highest_access(user)
+					// 	.and_then(|a| if a == Access::Owner { None } else { Some(a) }),
 					..Default::default()
 				},
 			}
@@ -185,6 +187,22 @@ impl From<Arc<RwLock<DBChunk>>> for ChunkId {
 impl From<&Arc<RwLock<DBChunk>>> for ChunkId {
 	fn from(rc: &Arc<RwLock<DBChunk>>) -> Self {
 		Self(rc.read().unwrap().chunk().id.clone())
+	}
+}
+/**
+ * ChunkValue
+ * It turns an Rc<DBChunk> to a Value String
+ */
+#[derive(Serialize)]
+pub struct ChunkValue(String);
+impl From<Arc<RwLock<DBChunk>>> for ChunkValue {
+	fn from(rc: Arc<RwLock<DBChunk>>) -> Self {
+		Self::from(&rc)
+	}
+}
+impl From<&Arc<RwLock<DBChunk>>> for ChunkValue {
+	fn from(rc: &Arc<RwLock<DBChunk>>) -> Self {
+		Self(rc.read().unwrap().chunk().value.clone())
 	}
 }
 pub enum SortType {

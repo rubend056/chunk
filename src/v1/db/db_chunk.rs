@@ -214,7 +214,7 @@ impl DBChunk {
 			.unwrap_or_default();
 		props.retain(|k, v| props_other.get(k).and_then(|_v| Some(_v != v)).unwrap_or(true));
 
-		props.into_iter().map(|(k,_)| k).collect()
+		props.into_iter().map(|(k, _)| k).collect()
 	}
 	/// Gets a static property.
 	pub fn get_prop<T: for<'de> Deserialize<'de>>(&self, v: &str) -> Option<T> {
@@ -341,10 +341,22 @@ impl DBChunk {
 	/**
 	 * Function figure out if this chunk can be replaced by a new one.
 	 */
-	pub fn can_update(&self, other: &Self, user: &str) -> bool {
-		if self.chunk.owner == user {
-			return true;
+	pub fn try_update(&self, other: &mut Self, user: &str) -> bool {
+		if self.chunk.id != other.chunk.id.clone() {
+			return false;
 		}
+		other.chunk.created = self.chunk.created;
+		other.children = self.children.clone();
+
+		if self.chunk.owner == user {
+			if other.chunk.owner.is_empty() {
+				other.chunk.owner = self.chunk.owner.clone();
+			}
+			return true;
+		} else {
+			other.chunk.owner = self.chunk.owner.clone();
+		}
+
 		if self.chunk != other.chunk {
 			error!(
 				"User {user} trying to change inmuttable data of {:?} that's bad!",

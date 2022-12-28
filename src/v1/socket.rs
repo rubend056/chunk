@@ -23,7 +23,7 @@ use tokio::{
 	time,
 };
 
-use crate::v1::db::{db_chunk::DBChunk, Access, ChunkId, ChunkVec, ChunkView, SortType, ViewType};
+use crate::{v1::db::{db_chunk::DBChunk, Access, ChunkId, ChunkVec, ChunkView, SortType, ViewType, ChunkValue}};
 
 use super::{auth::UserClaims, ends::DB};
 
@@ -91,7 +91,7 @@ pub struct ResourceMessage {
 	pub id: usize,
 	// pub _type: MessageType,
 	pub resource: String,
-	pub value: Value,
+	pub value: String,
 	pub users: HashSet<String>,
 }
 impl Default for ResourceMessage {
@@ -124,7 +124,7 @@ impl<T: Serialize> From<(&str, HashSet<String>, &T)> for ResourceMessage {
 		Self {
 			resource: resource.into(),
 			users,
-			value: json!(value),
+			value: serde_json::to_string(value).unwrap(),
 			..Default::default()
 		}
 	}
@@ -175,7 +175,9 @@ async fn handle_socket(
 
 		let mut chunks: ChunkVec = db.write().unwrap().get_chunks(user).into();
 		chunks.sort(SortType::Modified);
-		let chunks = chunks.0.into_iter().map(|v| ChunkView::from((v, user.as_str(), ViewType::Notes))).collect::<Vec<_>>();
+		let chunks = chunks.0;
+		// maybe_paginate((query, chunks, &|v| ChunkView::from((v, user.as_str(), ViewType::Notes))))
+		let chunks = chunks.into_iter().map( |v| ChunkView::from((v, user.as_str(), ViewType::Notes))).collect::<Vec<_>>();
 		json!(chunks)
 	};
 
@@ -212,6 +214,7 @@ async fn handle_socket(
 	let handle_incoming = |m| {
 		if let Message::Text(m) = m {
 			let m = serde_json::from_str::<SocketMessage>(&m).unwrap();
+			// let page_query = m.value.as_ref().and_then(|v| serde_json::from_str::<PageQuery>(v.as_str()).ok()).unwrap_or_default();
 			let reply = |mut v: SocketMessage| {
 				v.resource = m.resource.to_owned();
 				v.id = m.id;
@@ -222,8 +225,8 @@ async fn handle_socket(
 							v._type = Some(MessageType::Ok)
 						}
 					}
-					None => {
-						v._type = None;
+					None => {	
+						if v._type == Some(MessageType::Ok) {v._type = None;};
 					}
 				}
 				Some(Message::Text(serde_json::to_string(&v).unwrap()))
@@ -233,42 +236,50 @@ async fn handle_socket(
 
 			if piece == Some("chunks") {
 				if let Some(id) = res.pop_front() {
-					// If an id was provided
-					if let Some(value) = m.value {
-						// User wants to change a value
-						// if (m._type == MessageType::Change){return None;}
-						let db_chunk: DBChunk = (id, value.as_str()).into();
-						let users = db_chunk.access_users();
-						match db.write().unwrap().update_chunk_with_diff(db_chunk, user) {
-							Ok((users_to_notify, diff)) => {
-								let m = ResourceMessage::from((format!("chunks/{}/diff", id).as_str(), users, &diff));
-								{
-									// Update our resource_id_last so we don't send the same data back when sending a signal to tx_resource
-									let mut resource_id_last = resource_id_last.write().unwrap();
-									*resource_id_last = m.id;
+					piece = res.pop_front();
+					
+					if piece == Some("value") {
+						if let Some(value) = m.value {
+							// User wants to change a value
+							let db_chunk: DBChunk = (id, value.as_str()).into();
+							match db.write().unwrap().update_chunk(db_chunk, user) {
+								Ok((users_to_notify, diff, db_chunk)) => {
+									let users = db_chunk.read().unwrap().access_users();
+									let m = ResourceMessage::from((format!("chunks/{}/value/diff", id).as_str(), users.clone(), &diff));
+									{
+										// Update our resource_id_last so we don't send the same data back when sending a signal to tx_resource
+										let mut resource_id_last = resource_id_last.write().unwrap();
+										*resource_id_last = m.id;
+									}
+									tx_resource.send(m).unwrap();
+									tx_resource.send(ResourceMessage::from((format!("chunks/{}", id).as_str(), users, &ChunkView::from((db_chunk, user.as_str(), ViewType::Edit))))).unwrap();
+	
+									if users_to_notify.len() > 0 {
+										tx_resource
+											.send(ResourceMessage::from(("chunks", users_to_notify)))
+											.unwrap();
+									}
+	
+									return reply(MessageType::Ok.into());
 								}
-								tx_resource.send(m).unwrap();
-
-								if users_to_notify.len() > 0 {
-									tx_resource
-										.send(ResourceMessage::from(("chunks", users_to_notify)))
-										.unwrap();
-								}
-
-								return reply(MessageType::Ok.into());
+								Err(err) => return reply((MessageType::Error, &format!("{err:?}")).into()),
 							}
-							Err(err) => return reply((MessageType::Error, &format!("{err:?}")).into()),
+						} else {
+							// Request for "chunks/<id>/value"
+							if let Some(v) = db.read().unwrap().get_chunk(id, &user) {
+								return reply((&ChunkValue::from(v)).into());
+							}
 						}
-					} else {
-						// Request for "chunks/<id>"
+					} else if piece == None {
 						if let Some(v) = db.read().unwrap().get_chunk(id, &user) {
-							return reply((&ChunkView::from((v, user.as_str()))).into());
+							return reply((&ChunkView::from((v, user.as_str(), ViewType::Edit))).into());
 						}
 					}
+					 
 					return reply((MessageType::Error, &format!("NotFound")).into());
 				} else {
 					// Request for "chunks"
-					return reply((&get_notes()).into());
+					// return reply((&get_notes()).into());
 				}
 			} else if piece == Some("views") {
 				piece = res.pop_front();
@@ -320,6 +331,7 @@ async fn handle_socket(
 
 	let handle_resource = |message: ResourceMessage| -> Vec<String> {
 		let mut messages = vec![];
+		// info!("Resource message {message:?}");
 		{
 			// Only continue if the message's id is greater than our last processed id
 			let mut resource_id_last = resource_id_last.write().unwrap();
@@ -334,9 +346,7 @@ async fn handle_socket(
 		}
 		info!("Triggered '{}' to '{}'", &message.resource, user);
 
-		let mut socket_message = SocketMessage::from(&message.value);
-		socket_message.resource = message.resource.clone();
-		messages.push(serde_json::to_string(&socket_message).unwrap());
+		messages.push(serde_json::to_string(&SocketMessage {id: None, _type: None, value: Some(message.value.clone()), resource: message.resource.clone()}).unwrap());
 
 		messages
 	};
