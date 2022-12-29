@@ -86,7 +86,6 @@ pub enum DbError {
 
 use diff::Result::*;
 
-use crate::v1::db::ViewType;
 pub fn diff_calc(left: &str, right: &str) -> Vec<String> {
 	let diffs = diff::lines(left, right);
 	// SO it'll be ["B44", ""]

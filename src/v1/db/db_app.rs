@@ -5,8 +5,8 @@ use lazy_static::lazy_static;
  * A DB without a reference (normalized title) implementation and actual dynamic memory pointers instead of repetitive lookups.
  * Should be orders of magnitud simpler and faster.
  */
-use log::error;
-use serde_json::Value;
+use log::{error, info};
+use serde_json::{json, Value};
 use std::{
 	collections::HashSet,
 	sync::{Arc, RwLock},
@@ -98,31 +98,54 @@ impl DB {
 		let mut to_remove = HashSet::<String>::default();
 
 		for id in ids {
-			if let Some(chunk) = self.chunks.get(&id) {
-				let mut chunk = chunk.write().unwrap();
+			// Temporary variables for update
+			let mut chunk_to_replace = None;
+			if let Some(chunk_ref) = self.chunks.get(&id) {
+				let chunk = chunk_ref.write().unwrap();
 				if chunk.has_access(&(user.to_owned(), Access::Admin).into()) {
 					to_remove.insert(chunk.chunk().id.to_owned());
 					changed.extend(chunk.access_diff(None));
 				} else if chunk.has_access(&user.into()) {
 					// Have to think about this a bit more, specially when concerning groups
 					// If a user has read access and he/she is part of a group there has to be a way for them to exit out...
+					let mut chunk = DBChunk::from((id.as_str(), chunk.chunk().value.as_str(), chunk.chunk().owner.as_str()));
+					let mut access = chunk
+						.get_prop::<HashSet<UserAccess>>("access")
+						.expect("If user has read access, access has to be valid here");
+					access.retain(|ua| ua.user != user); // Remove all of this users's access
+					if !chunk.r#override("access", json!(access)) {
+						error!("Couldn't do shit here");
+						return Err(DbError::AuthError);
+					};
+					chunk_to_replace = Some(chunk);
+				} else {
 					return Err(DbError::AuthError);
 				}
 			} else {
 				return Err(DbError::NotFound);
 			}
+			// Perform the update
+			if let Some(chunk_to_replace) = chunk_to_replace {
+				let owner = chunk_to_replace.chunk().owner.clone();
+				self.set_chunk(chunk_to_replace, owner.as_str()).unwrap();
+				
+				changed.insert(user.into());
+			}
 		}
 
 		// Delete all them chunks which have to be deleted
 		to_remove.iter().for_each(|id| {
+			{
+				// Invalidate all parents
+				self.chunks.get(id).unwrap().write().unwrap().invalidate(&vec![], true)
+			}
 			self.chunks.remove(id);
 		});
 
 		Ok(changed)
 	}
-	/**
-	 * Receives a Chunk which it validates & links, returns the list of users for which access changed
-	 */
+	/// Receives a Chunk which it validates & links, returns the list of users for which access changed
+	///
 	pub fn set_chunk(&mut self, mut chunk: DBChunk, user: &str) -> Result<HashSet<String>, DbError> {
 		let diff_users;
 		let diff_props;
@@ -131,7 +154,7 @@ impl DB {
 			let chunk_old = chunk_old.write().unwrap();
 
 			// Perform update check
-			if !chunk_old.try_update(&mut chunk, user) {
+			if !chunk_old.try_clone_to(&mut chunk, user) {
 				return Err(DbError::AuthError);
 			}
 
@@ -160,9 +183,7 @@ impl DB {
 
 		Ok(diff_users)
 	}
-	/**
-	 *
-	 */
+	/// Chunk update called by socket, adds `diff` information to returned Result
 	pub fn update_chunk(
 		&mut self,
 		chunk: DBChunk,

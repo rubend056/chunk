@@ -13,7 +13,10 @@ use pasetors::{public, version4::V4, Public};
 use serde::Serialize;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
-use super::ends::DB;
+use super::{
+	ends::DB,
+	socket::{ResourceMessage, ResourceSender},
+};
 
 lazy_static! {
 	static ref KP: AsymmetricKeyPair::<V4> = AsymmetricKeyPair::<V4>::generate().unwrap();
@@ -86,18 +89,40 @@ pub async fn reset(
 ) -> Result<impl IntoResponse, DbError> {
 	let mut db = db.write().unwrap();
 
-	db.auth.reset(&user, &pass, &old_pass)
+	db.auth
+		.reset(&user, &pass, &old_pass)
 		.and_then(|_| {
-			info!("User password reset '{}'.", &user);
+			info!("User password reset '{user}'.");
 			Ok("User pass reset.")
 		})
 		.or_else(|err| {
-			error!(
-				"Failed password reset for '{}' with old_pass '{}': {:?}.",
-				&user, &old_pass, &err
-			);
+			error!("Failed password reset for '{user}' with old_pass '{old_pass}': {err:?}.");
 			Err(err)
 		})
+}
+pub async fn logout_all(
+	Extension(db): Extension<DB>,
+	Extension(user_claims): Extension<UserClaims>,
+	Extension(tx_r): Extension<ResourceSender>,
+) -> Result<impl IntoResponse, DbError> {
+	db.write()
+		.unwrap()
+		.auth
+		.users
+		.get(&user_claims.user)
+		.unwrap()
+		.write()
+		.unwrap()
+		.reset_not_before();
+
+	tx_r
+		.send(ResourceMessage {
+			close_for_users: Some([user_claims.user.clone()].into()),
+			..Default::default()
+		})
+		.unwrap();
+
+	Ok(())
 }
 
 use axum::{http::Request, middleware::Next, response::Response};
@@ -147,12 +172,9 @@ pub async fn authenticate<B>(mut req: Request<B>, next: Next<B>) -> Result<Respo
 
 				let db = req.extensions().get::<DB>().unwrap();
 				if let Ok(user) = db.read().unwrap().auth.get_user(user_claim) {
-					if iat_unix >= user.not_before {
-						iat_good = true;
-					}
+					iat_good = user.verify_not_before(iat_unix);
 				}
-				
-				
+
 				if iat_good {
 					user_claims = _user_claims;
 					req.extensions_mut().insert(token);

@@ -154,18 +154,20 @@ pub async fn chunks_put(
 		.unwrap();
 
 	// Notifies users which already have access, of the note's new content
+	//
+	// Only do so if modifying a chunk, because a new one won't have an id.
+	// Because the user that created it will ask for them anyway almost immediately
+	// since we will have told them that they have to update their view up there ^
 	if let Some(id) = body.id {
 		let chunk = ChunkView::from((
 			db.read().unwrap().get_chunk(&id, &user_claims.user).unwrap(),
 			user_claims.user.as_str(),
 		));
-		// This check is to not so eagerly send out the note's contents on creation
-		// if the user that created it will ask for them anyway almost immediately
-		// Because we will have told them that they have to update their view up there ^
+
 		tx_r
 			.send(ResourceMessage::from((
 				format!("chunks/{}", id).as_str(),
-				users_to_notify,
+				users,
 				&chunk,
 			)))
 			.unwrap();
@@ -182,32 +184,12 @@ pub async fn chunks_del(
 ) -> Result<impl IntoResponse, DbError> {
 	let users_to_notify = db.write().unwrap().del_chunk(input, &user_claims.user)?;
 
-	// Notify users for which this notes where deleted that changes were made
 	tx_r.send(ResourceMessage::from(("chunks", users_to_notify))).unwrap();
-
-	// Notify other users that these notes were modified
-	// users_changed.into_iter().for_each(|(c, m)| {
-	// 	let mut users = HashSet::<_>::default();
-	// 	users.insert(c.owner.to_owned());
-	// 	users.extend(m.access.into_iter().map(|(u, _)| u));
-	// 	tx_r
-	// 		.send(ResourceMessage::new(
-	// 			format!("chunks/{}", c.id.clone()),
-	// 			Some(&c),
-	// 			users,
-	// 		))
-	// 		.unwrap();
-	// });
 
 	Ok(())
 }
 
-pub async fn media_get(
-	Path(id): Path<String>,
-	// Extension(db): Extension<DB>,
-	// Extension(user_claims): Extension<UserClaims>,
-) -> Result<impl IntoResponse, impl IntoResponse> {
-	// `File` implements `AsyncRead`
+pub async fn media_get(Path(id): Path<String>) -> Result<impl IntoResponse, impl IntoResponse> {
 	let path = std::path::Path::new(MEDIA_FOLDER.as_str());
 	let path = path.join(id);
 

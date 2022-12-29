@@ -6,7 +6,7 @@ use serde_json::{json, Map, Value};
 use std::{
 	collections::{HashMap, HashSet},
 	fmt::Debug,
-	sync::{Arc, RwLock, Weak},
+	sync::{Arc, RwLock, Weak}, default,
 };
 
 use super::{Access, Chunk, UserAccess};
@@ -50,29 +50,23 @@ impl Debug for DynamicProperty {
 #[derive(Debug)]
 pub struct DBChunk {
 	chunk: Chunk,
-	/**
-	 * Statically extracted properties
-	 */
+
+	/// Statically extracted properties
 	props: HashMap<String, Value>,
-	/**
-	 * Additional dynamic custom properties ? Obscure idea At The Moment
-	 */
+
+	/// Additional dynamic custom properties ? Obscure idea At The Moment
 	props_dynamic_custom: Vec<DynamicProperty>,
-	/**
-	 * Dynamic prop values defined by  (User + Key) -> Value
-	 */
+
+	/// Dynamic prop values defined by  (User + Key) -> Value
 	props_per_user: HashMap<(String, String), Value>,
-	/**
-	 * parents, whoever modifies these refs, has to make sure there are no circular references
-	 * */
+
+	/// parents, whoever modifies these refs, has to make sure there are no circular references
 	pub parents: Vec<Weak<RwLock<DBChunk>>>,
-	/**
-	 * Determines wether this chunk has been linked to parents.
-	 */
+
+	///  Determines wether this chunk has been linked to parents.
 	pub linked: bool,
-	/**
-	 * children, whoever modifies these refs, has to make sure there are no circular references
-	 * */
+
+	///  children, whoever modifies these refs, has to make sure there are no circular references
 	pub children: Vec<Weak<RwLock<DBChunk>>>,
 }
 impl Default for DBChunk {
@@ -185,15 +179,45 @@ impl DBChunk {
 			self.props.insert("access".to_string(), json!(access));
 		}
 	}
+	/// Attempts to override value prop. Will always fail if it's already linked.
+	pub fn r#override(&mut self, key: &str, value: Value) -> bool {
+		if self.linked {
+			return false;
+		}
+		let mut finish_up = || -> bool {
+			self.props.insert(key.into(), value.clone());
+			true
+		};
+
+		if key == "access" {
+			if let Ok(uas) = serde_json::from_value::<HashSet<UserAccess>>(value.clone()) {
+				let mut v = self.chunk.value.clone();
+				v = REGEX_ACCESS.replace_all(v.as_str(), "").to_string();
+				// let uas = uas.into_iter().fold(HashSet<UserAccess>::default(), |acc, ua| )
+				let uas = uas
+					.into_iter()
+					.map(|ua| format!("{} {:?}", ua.user, ua.access))
+					.collect::<Vec<_>>()
+					.join(", ");
+				if !uas.is_empty() {
+					v.push_str(format!("share: {uas}",).as_str());
+				}
+
+				self.chunk.value = v;
+
+				return finish_up();
+			}
+		}
+		false
+	}
+
 	/** Gets users with access to this note, including the owner */
 	pub fn access_users(&self) -> HashSet<String> {
-		let mut access: HashSet<String> = self
-			.get_prop::<HashSet<UserAccess>>("access")
-			.unwrap_or_default()
-			.into_iter()
-			.map(|v| v.user.clone())
-			.collect();
-		access.insert(self.chunk.owner.clone());
+		self.access().into_iter().map(|ua| ua.user).collect()
+	}
+	fn access(&self) -> HashSet<UserAccess> {
+		let mut access = self.get_prop::<HashSet<UserAccess>>("access").unwrap_or_default();
+		access.insert((self.chunk.owner.clone(), Access::Owner).into());
 		access
 	}
 	/// Used to find out who has to be notified that access was changed for them
@@ -202,10 +226,13 @@ impl DBChunk {
 	///
 	/// Other could be None if deletion/creation is happening
 	pub fn access_diff(&self, other: Option<&Self>) -> HashSet<String> {
-		let access = self.access_users();
-		let access_other = other.and_then(|v| Some(v.access_users())).unwrap_or_default();
+		let access = self.access();
+		let access_other = other.and_then(|v| Some(v.access())).unwrap_or_default();
 
-		access.difference(&access_other).map(|v| v.clone()).collect()
+		access
+			.symmetric_difference(&access_other)
+			.map(|v| v.user.clone())
+			.collect()
 	}
 	pub fn props_diff(&self, other: Option<&Self>) -> HashSet<String> {
 		let mut props = self.props().into_iter().collect::<Map<String, Value>>();
@@ -289,7 +316,9 @@ impl DBChunk {
 	 * up: true (recurse parents) / false (children)
 	 */
 	pub fn invalidate(&mut self, keys: &Vec<&str>, up: bool) {
-		self.props_per_user.retain(|(_, k), _| !keys.contains(&k.as_str()));
+		// self.props_per_user.retain(|(_, k), _| !keys.contains(&k.as_str()));
+		self.props_per_user.clear(); // FOR NOW CLEAR IT ALL
+
 		let others = if up { &self.parents } else { &self.children };
 		others
 			.iter()
@@ -341,7 +370,7 @@ impl DBChunk {
 	/**
 	 * Function figure out if this chunk can be replaced by a new one.
 	 */
-	pub fn try_update(&self, other: &mut Self, user: &str) -> bool {
+	pub fn try_clone_to(&self, other: &mut Self, user: &str) -> bool {
 		if self.chunk.id != other.chunk.id.clone() {
 			return false;
 		}

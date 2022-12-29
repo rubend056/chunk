@@ -4,7 +4,7 @@ use argon2::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::utils::{get_secs, DbError, REGEX_USERNAME, REGEX_PASSWORD};
+use crate::utils::{get_secs, DbError, REGEX_PASSWORD, REGEX_USERNAME};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct User {
@@ -15,7 +15,7 @@ pub struct User {
 }
 
 impl User {
-	fn _verify(&self, pass: &str) -> bool {
+	fn verify_pass(&self, pass: &str) -> bool {
 		// PHC string -> PasswordHash.
 		let parsed_hash = PasswordHash::new(&self.pass).expect("Error parsing existing password field");
 
@@ -31,7 +31,12 @@ impl User {
 		}
 
 		let salt = SaltString::generate(&mut OsRng);
-		Ok(Argon2::default().hash_password(pass.as_bytes(), &salt).unwrap().to_string())
+		Ok(
+			Argon2::default()
+				.hash_password(pass.as_bytes(), &salt)
+				.unwrap()
+				.to_string(),
+		)
 	}
 	pub fn new(user: &str, pass: &str) -> Result<Self, DbError> {
 		if !REGEX_USERNAME.is_match(user) {
@@ -46,18 +51,20 @@ impl User {
 	}
 
 	pub fn verify(&self, pass: &str) -> bool {
-		if get_secs() < self.not_before {
-			return false;
-		}
-		self._verify(pass)
+		self.verify_not_before(get_secs()) && self.verify_pass(pass)
 	}
-
+	pub fn verify_not_before(&self, issued_at: u64) -> bool {
+		issued_at >= self.not_before
+	}
+	pub fn reset_not_before(&mut self) {
+		self.not_before = get_secs();
+	}
 	pub fn reset_pass(&mut self, old_pass: &str, pass: &str) -> Result<(), DbError> {
-		if !self._verify(old_pass) {
+		if !self.verify_pass(old_pass) {
 			return Err(DbError::AuthError);
 		}
 		self.pass = User::hash(pass)?;
-		self.not_before = get_secs();
+		self.reset_not_before();
 
 		Ok(())
 	}

@@ -86,13 +86,16 @@ impl From<MessageType> for SocketMessage {
 	}
 }
 
+
+
 #[derive(Clone, Debug)]
 pub struct ResourceMessage {
 	pub id: usize,
-	// pub _type: MessageType,
 	pub resource: String,
 	pub value: String,
 	pub users: HashSet<String>,
+	/// If this is Some, sockets that have contained users will close.
+	pub close_for_users: Option<HashSet<String>>,
 }
 impl Default for ResourceMessage {
 	fn default() -> Self {
@@ -101,6 +104,7 @@ impl Default for ResourceMessage {
 			resource: Default::default(),
 			value: Default::default(),
 			users: Default::default(),
+			close_for_users: None,
 		}
 	}
 }
@@ -213,7 +217,9 @@ async fn handle_socket(
 
 	let handle_incoming = |m| {
 		if let Message::Text(m) = m {
-			let m = serde_json::from_str::<SocketMessage>(&m).unwrap();
+			let m = serde_json::from_str::<SocketMessage>(&m);
+			if m.is_err() {return None;}
+			let m = m.unwrap();
 			// let page_query = m.value.as_ref().and_then(|v| serde_json::from_str::<PageQuery>(v.as_str()).ok()).unwrap_or_default();
 			let reply = |mut v: SocketMessage| {
 				v.resource = m.resource.to_owned();
@@ -329,26 +335,28 @@ async fn handle_socket(
 		None
 	};
 
-	let handle_resource = |message: ResourceMessage| -> Vec<String> {
+	let handle_resource = |message: ResourceMessage| -> Result<Vec<String>, ()> {
 		let mut messages = vec![];
-		// info!("Resource message {message:?}");
+		if let Some(users) =  message.close_for_users {
+			if users.contains(user) {return Err(());}
+		}
 		{
 			// Only continue if the message's id is greater than our last processed id
 			let mut resource_id_last = resource_id_last.write().unwrap();
 			if message.id <= *resource_id_last {
-				return messages;
+				return Ok(messages);
 			}
 			*resource_id_last = message.id;
 		}
 		// Only continue if the connected user is part of the list of users in the message
 		if !message.users.contains(user) {
-			return messages;
+			return Ok(messages);
 		}
 		info!("Triggered '{}' to '{}'", &message.resource, user);
 
 		messages.push(serde_json::to_string(&SocketMessage {id: None, _type: None, value: Some(message.value.clone()), resource: message.resource.clone()}).unwrap());
 
-		messages
+		Ok(messages)
 	};
 	loop {
 		tokio::select! {
@@ -373,16 +381,16 @@ async fn handle_socket(
 			// Handles resource incoming
 			m = rx_resource.recv() => {
 				if let Ok(m) = m {
-					let ms = handle_resource(m);
-					for m in ms {
-						tx_socket.feed(Message::Text(m)).await.unwrap();
-					}
-					if let Err(err) = tx_socket.flush().await {
-
-							info!("Got {err:?} while sending to {address}, assuming client disconnected");
-							break;
-
-					};
+					if let Ok(ms) = handle_resource(m){
+						for m in ms {
+							tx_socket.feed(Message::Text(m)).await.unwrap();
+						}
+						if let Err(err) = tx_socket.flush().await {
+								info!("Got {err:?} while sending to {address}, assuming client disconnected");
+								break;
+						};
+					}else{break;}
+					
 				}else{
 					error!("Received Err resource {m:?} on {address}, closing connection.");
 					match tx_socket.close().await{

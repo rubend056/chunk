@@ -62,15 +62,15 @@ async fn main() {
 			"/api",
 			Router::new()
 				.route("/chunks", get(chunks_get).put(chunks_put).delete(chunks_del))
-				// .route("/well", get(well_get))
-				// .route("/well/:id", get(well_get))
+				.route("/media", post(media_post))
+				// ONLY if NOT public ^
 				.route_layer(axum::middleware::from_fn(auth::auth_required))
 				.route("/chunks/:id", get(chunks_get_id))
 				.route("/stream", get(websocket_handler))
 				.route("/user", get(auth::user))
-				.route("/media", post(media_post))
 				.route("/media/:id", get(media_get))
-				// Allow only signed in users past this point
+				.route("/logout_all", get(auth::logout_all))
+				// ONLY GET if public ^
 				.route_layer(axum::middleware::from_fn(auth::public_only_get))
 				.route("/login", post(auth::login))
 				.route("/reset", post(auth::reset))
