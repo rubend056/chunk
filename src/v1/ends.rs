@@ -209,10 +209,16 @@ pub async fn media_get(Path(id): Path<String>) -> Result<impl IntoResponse, impl
 		// // convert the `Stream` into an `axum::body::HttpBody`
 		let body = StreamBody::new(stream);
 
-		let headers = match _type {
-			Some(_type) => [(header::CONTENT_TYPE, _type.mime_type())],
-			None => [(header::CONTENT_TYPE, "text/plain")],
-		};
+		let headers = [
+			(
+				header::CONTENT_TYPE,
+				match _type {
+					Some(_type) => _type.mime_type(),
+					None => "text/plain",
+				},
+			),
+			(header::CACHE_CONTROL, "max-age=31536000"), // Makes browser cache for a year
+		];
 		Ok((headers, body))
 	} else {
 		Err((StatusCode::NO_CONTENT, "Error reading file?".to_string()))

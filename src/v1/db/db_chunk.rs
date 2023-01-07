@@ -5,8 +5,9 @@ use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use std::{
 	collections::{HashMap, HashSet},
+	default,
 	fmt::Debug,
-	sync::{Arc, RwLock, Weak}, default,
+	sync::{Arc, RwLock, Weak},
 };
 
 use super::{Access, Chunk, UserAccess};
@@ -211,7 +212,7 @@ impl DBChunk {
 		false
 	}
 
-	/** Gets users with access to this note, including the owner */
+	/// Gets users with access to this note, including the owner
 	pub fn access_users(&self) -> HashSet<String> {
 		self.access().into_iter().map(|ua| ua.user).collect()
 	}
@@ -349,6 +350,12 @@ impl DBChunk {
 		} else {
 			false
 		}
+	}
+	pub fn is_public(&self) -> bool {
+		self
+			.get_prop::<HashSet<UserAccess>>("access")
+			.and_then(|access| Some(access.contains(&"public".into())))
+			.unwrap_or(false)
 	}
 	/**
 	 * Returns highest access user is allowed for this chunk
@@ -533,13 +540,17 @@ mod tests {
 	#[test]
 	fn test() {
 		let mut chunk = DBChunk::from((None, "# Testing\n", "john"));
-		// println!("{chunk:?}");
-		// let ua = ;
-		// println!("owner {}, user {}", &chunk.chunk.owner, &ua.0);
 		assert!(chunk.has_access(&"john".into()));
-		assert!(chunk.has_access(&"nina".into()) == false);
+		assert_eq!(chunk.has_access(&"nina".into()), false);
 		let mut chunk = DBChunk::from((None, "# Testing\naccess:nina r", "john"));
-		assert!(chunk.has_access(&"nina".into()) == true);
-		// println!("{chunk:?}");
+		assert_eq!(chunk.has_access(&"nina".into()), true);
+		let mut chunk = DBChunk::from((None, "# Testing\naccess:nina w", "john"));
+		assert_eq!(chunk.has_access(&"nina".into()), true);
+		assert_eq!(chunk.has_access(&("nina", Access::Write).into()), true);
+		let mut chunk = DBChunk::from((None, "# Testing\naccess:nina a", "john"));
+		assert_eq!(chunk.has_access(&"nina".into()), true);
+		assert_eq!(chunk.has_access(&("nina", Access::Write).into()), true);
+		assert_eq!(chunk.has_access(&("nina", Access::Admin).into()), true);
+		assert_eq!(chunk.has_access(&("john", Access::Owner).into()), true);
 	}
 }

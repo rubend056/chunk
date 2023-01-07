@@ -82,8 +82,8 @@ impl DB {
 	 */
 	pub fn get_chunk(&self, id: &str, user: &str) -> Option<Arc<RwLock<DBChunk>>> {
 		self.chunks.get(id).and_then(|chunk_ref| {
-			let mut chunk = chunk_ref.write().unwrap();
-			if chunk.has_access(&user.into()) {
+			let chunk = chunk_ref.write().unwrap();
+			if chunk.has_access(&user.into()) || chunk.is_public() {
 				Some(chunk_ref.clone())
 			} else {
 				None

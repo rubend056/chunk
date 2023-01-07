@@ -233,6 +233,12 @@ impl<T: From<Arc<RwLock<DBChunk>>>> Into<Vec<T>> for ChunkVec {
 	}
 }
 
+/// A chunk which is defined by its properties.
+pub struct PropChunk {
+	pub id: String,
+	pub props: BTreeMap<String, String>,
+}
+
 /**
  * The basic building block
  */

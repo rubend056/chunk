@@ -185,7 +185,7 @@ async fn handle_socket(
 		json!(chunks)
 	};
 
-	/// [[parent,parent], [child,child]]
+	// [[parent,parent], [child,child]]
 	let get_subtree = |root: Option<&str>, view_type: ViewType| {
 		if user == "public" {
 			return json!([[], []]);
