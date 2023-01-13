@@ -11,7 +11,7 @@ use crate::utils::{gen_proquint, get_secs, standardize, DbError, REGEX_ACCESS, R
 
 
 
-pub type UserAccess = (String, Access);
+// pub type UserAccess = (String, Access);
 
 
 //---------------------------------- META --------------------

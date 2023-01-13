@@ -35,10 +35,10 @@
 				],
 				"filter": {
 					"name": "chunk-app",
-					"kind": "bin"
+					"kind": "bin",
 				}
 			},
-			"args": [],
+			"args": ["--test-threads=1"],
 			"cwd": "${workspaceFolder}"
 		}
 	]

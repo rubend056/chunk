@@ -351,6 +351,16 @@ mod tests {
 			Ok(HashSet::from(["john".into()]))
 		);
 	}
+	#[test]
+	fn sharing() {
+		let mut db = DB::default();
+
+		let c_notes: DBChunk = "# Notes\nshare: poca w".into();
+		println!("{:?}",c_notes.props());
+		let id_notes = c_notes.chunk().id.clone();
+		assert!(db.set_chunk(c_notes, "john").is_ok());
+		assert_eq!(db.set_chunk((id_notes.as_str(), "# Notes\nHello :)\nshare: poca w").into(), "poca"), Ok(HashSet::default()));
+	}
 	/// Create a "Notes"
 	/// Modify "Notes" 10 sec after
 	/// Assert that Modify is 10 sec after Created.

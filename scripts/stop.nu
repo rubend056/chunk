@@ -5,7 +5,7 @@ def do_kill [name,p] {
 	if ($p | length) > 0 {
 		echo $"Killing ($name) process '(($p).name)'"
 		$p | each {|p| 
-			do -i {kill ($p | first).pid}
+			do -i {kill $p.pid}
 		}
 		sleep 1sec
 	}
@@ -23,9 +23,9 @@ export def stop [] {
 def do_kill_force [name,p] {
 	echo $"($name) ($p | length) active"
 	if ($p | length) > 0 {
-		echo $"Killing (forced) ($name) process '(($p).name)'"
+		echo $"Killing forced ($name) process '(($p).name)'";
 		$p | each {|p| 
-			do -i {kill --force ($p | first).pid}
+			do -i {kill --force $p.pid}
 		}
 		sleep 1sec
 	}

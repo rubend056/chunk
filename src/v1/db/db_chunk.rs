@@ -400,12 +400,14 @@ impl DBChunk {
 			);
 			return false;
 		}
-		if let Some(access) = self.get_prop::<HashSet<(String, Access)>>("access") {
+		if let Some(access) = self.get_prop::<HashSet<UserAccess>>("access") {
 			// let ua = (user.to_string(), Access::Admin);
-			if access.contains(&(user.to_string(), Access::Admin)) {
+			if access.contains(&(user.to_string(), Access::Admin).into()) {
 				return true;
-			} else if access.contains(&(user.to_string(), Access::Write)) {
-				return self.get_prop::<Value>("access") == other.get_prop("access")
+			} else if access.contains(&(user.to_string(), Access::Write).into()) {
+				// println!("self {:?}\n\nother {:?}", self.props(), other.props());
+				// let hs = HashSet::from_iter(self.props().iter());
+				return self.get_prop::<HashSet<UserAccess>>("access") == other.get_prop("access")
 					&& self.get_prop::<Value>("title") == other.get_prop("title")
 					&& self.get_prop::<Value>("parents") == other.get_prop("parents");
 			}

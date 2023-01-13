@@ -56,8 +56,9 @@ pub async fn login(
 			Ok([(
 				header::SET_COOKIE,
 				format!(
-					"auth={pub_token}; SameSite=Strict; Max-Age={}; Path=/; Secure;",
-					60/*sec*/*60/*min*/*24/*hr*/*7 /*days*/ /*= a week in seconds*/
+					"auth={pub_token}; SameSite=Strict; Max-Age={}; Path=/;{}",
+					60/*sec*/*60/*min*/*24/*hr*/*7, /*days*/ /*= a week in seconds*/
+					if cfg!(debug_assertions)  { "" } else { " Secure;" }
 				),
 			)])
 		})
