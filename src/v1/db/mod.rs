@@ -2,21 +2,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 /** Designing a new Data Structure that would allow for all queries/insertions/serializations to efficiently happen */
 
-/**
- - Different visualization options
- - Editing
-	 - ![](web/src/assets/icons/card-text.svg) **Shank/Edit** -> selected chunk + children up to 4N (1N default) an editor
- - Viewing
-	 - ![](web/src/assets/icons/clipboard.svg) **Notes** -> chunks ordered by recent side by side
-	 - ![](web/src/assets/icons/grid.svg) **Well** -> selected chunk children on a grid
-	 - ![](web/src/assets/icons/diagram-2-fill.svg) **Graph** -> nodes in a tree
-				 (S)	-> (R r)
-				(S) -> ()
-
-				(R) -> (S w) ->
-								\> (S r)
-		Querying this with different views
-*/
 use std::{
 	collections::{BTreeMap, HashMap, HashSet},
 	sync::{Arc, RwLock, RwLockWriteGuard},
@@ -341,8 +326,18 @@ impl From<&str> for UserAccess {
 	}
 }
 
-#[derive(Serialize, Debug)]
-pub struct GraphView(Value, Vec<GraphView>);
+/// Graphview allows for a tree structure to be represented
+/// - If there's a GraphView, there's a value
+/// - If children is Some, then children was queried and will be included
+/// - If children is None, then children wasn't meant to to be included
+/// 
+/// Meant to be declarative about what was queried or wasn't, as to reduce ambiguity.
+#[derive(Serialize, Debug, PartialEq)]
+pub struct GraphView(
+	Value, 
+	#[serde(skip_serializing_if = "Option::is_none")]
+	Option<Vec<GraphView>>
+);
 
 /**
  * An improved 2.0, reference counted version,

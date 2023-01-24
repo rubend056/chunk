@@ -1,3 +1,4 @@
+use hyper::StatusCode;
 use log::{error, info, trace};
 use std::fs;
 
@@ -10,9 +11,9 @@ use self::{
 
 pub mod auth;
 // pub mod chunk;
-pub mod format;
 pub mod db;
 pub mod ends;
+pub mod format;
 pub mod js_deno;
 pub mod js_quick;
 pub mod socket;
@@ -30,6 +31,9 @@ pub async fn init() -> DB {
 			trace!("Fetching {}", db_init);
 			match reqwest::get(format!("{db_init}/api/mirror/{MAGIC_BEAN}")).await {
 				Ok(v) => {
+					if v.status() != StatusCode::OK {
+						return failover(&db_init);
+					}
 					let dbdata = serde_json::from_slice::<DBData>(&v.bytes().await.unwrap()).unwrap();
 					info!(
 						"Read {} for {} chunks, and {} users",

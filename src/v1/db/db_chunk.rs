@@ -1,6 +1,6 @@
 use crate::utils::{standardize, REGEX_ACCESS, REGEX_PROPERTY, REGEX_TITLE, REGEX_USERNAME};
 use lazy_static::lazy_static;
-use log::error;
+use log::{error, info};
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use std::{
@@ -375,43 +375,56 @@ impl DBChunk {
 		})
 	}
 	/**
-	 * Function figure out if this chunk can be replaced by a new one.
+	 * Enforces security rules when updating a DBChunk
 	 */
 	pub fn try_clone_to(&self, other: &mut Self, user: &str) -> bool {
-		if self.chunk.id != other.chunk.id.clone() {
-			return false;
-		}
-		other.chunk.created = self.chunk.created;
-		other.children = self.children.clone();
+		let print_err = |s| {
+			error!("Cant clone {}, {}", self.chunk().id, s);
+		};
 
-		if self.chunk.owner == user {
-			if other.chunk.owner.is_empty() {
-				other.chunk.owner = self.chunk.owner.clone();
-			}
-			return true;
-		} else {
+		{
+			// Copy things
+			other.chunk.created = self.chunk.created;
 			other.chunk.owner = self.chunk.owner.clone();
+			if self.chunk != other.chunk {
+				print_err("changing chunk's immutable data not allowed");
+				return false;
+			}
+
+			other.children = self.children.clone();
 		}
 
-		if self.chunk != other.chunk {
-			error!(
-				"User {user} trying to change inmuttable data of {:?} that's bad!",
-				&self.chunk
-			);
-			return false;
-		}
-		if let Some(access) = self.get_prop::<HashSet<UserAccess>>("access") {
-			// let ua = (user.to_string(), Access::Admin);
-			if access.contains(&(user.to_string(), Access::Admin).into()) {
+		{
+			// Perform security checks
+			if self.chunk.owner == user {
 				return true;
-			} else if access.contains(&(user.to_string(), Access::Write).into()) {
-				// println!("self {:?}\n\nother {:?}", self.props(), other.props());
-				// let hs = HashSet::from_iter(self.props().iter());
-				return self.get_prop::<HashSet<UserAccess>>("access") == other.get_prop("access")
-					&& self.get_prop::<Value>("title") == other.get_prop("title")
-					&& self.get_prop::<Value>("parents") == other.get_prop("parents");
+			}
+			if let Some(access) = self.get_prop::<HashSet<UserAccess>>("access") {
+				// let ua = (user.to_string(), Access::Admin);
+				if access.contains(&(user.to_string(), Access::Admin).into()) {
+					// Admins can change anything too
+					// return true;
+					// Not quite, they still have to be admins, to prevent them removing their own access by mistake
+					return other.has_access(&(user.to_string(), Access::Admin).into());
+				} else if access.contains(&(user.to_string(), Access::Write).into()) {
+					// Write users can change anything... but access, title, and parents
+					if self.get_prop::<HashSet<UserAccess>>("access") != other.get_prop("access") {
+						print_err("access doesn't match");
+						return false;
+					}
+					if self.get_prop::<Value>("title") != other.get_prop("title") {
+						print_err("title doesn't match");
+						return false;
+					}
+					if self.get_prop::<Value>("parents") != other.get_prop("parents") {
+						print_err("parents dont match");
+						return false;
+					}
+					return true;
+				}
 			}
 		}
+		
 		false
 	}
 	pub fn parents(&self, ua: Option<&UserAccess>) -> Vec<Arc<RwLock<DBChunk>>> {

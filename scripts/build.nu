@@ -4,19 +4,17 @@ use env.nu *
 use stop.nu *
 
 export def build [] {
-	# Exit if not in this directory, this is crap lmao
-	# if (pwd|lines).0 != "/home/rubend/p/chunk-app" {exit}
-
-	# Just to make sure
+	# Just to make sure everything has stopped
 	stop
 	
+	# Load all configs into build scope
 	load_regex
 	open env.toml | load-env
 	open prod.toml | load-env
 
 	# Create output dirs
 	rm -rf container/dist
-	mkdir container/dist/web
+	mkdir container/dist
 
 	# Build server
 	cargo build --release

@@ -2,8 +2,27 @@
 name = "chunk-app"
 version = "0.6.0"
 edition = "2021"
+authors = ["RubenD"]
+description = "Chunk, a notes app"
+default-run = "chunk-app"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+name = "lib"           # The name of the target.
+path = "src/lib.rs"    # The source file of the target.
+test = true            # Is tested by default.
+doctest = true         # Documentation examples are tested by default.
+bench = true           # Is benchmarked by default.
+doc = true             # Is documented by default.
+proc-macro = false     # Set to `true` for a proc-macro library.
+harness = true         # Use libtest harness.
+edition = "2021"       # The edition of the target.
+crate-type = ["lib"]   # The crate types to generate.
+
+
+[[bin]]
+name = "auth"
 
 [dependencies]
 axum = {version="0.6", features = ["ws", "macros", "headers"]}
@@ -34,5 +53,5 @@ time = "0.3.17"
 pulldown-cmark = "0.9.2"
 headers = "0.3.8"
 
-[profile.dev.package."*"]
+[profile.dev.package.image]
 opt-level = 3

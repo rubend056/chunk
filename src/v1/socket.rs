@@ -1,7 +1,7 @@
 use std::{
 	collections::{HashSet, VecDeque},
 	net::SocketAddr,
-	sync::{Arc, RwLock},
+	sync::{Arc, RwLock, Mutex},
 	time::Duration,
 };
 
@@ -92,6 +92,7 @@ impl From<MessageType> for SocketMessage {
 pub struct ResourceMessage {
 	pub id: usize,
 	pub resource: String,
+	pub resourceId: Option<String>,
 	pub value: String,
 	pub users: HashSet<String>,
 	/// If this is Some, sockets that have contained users will close.
@@ -102,6 +103,7 @@ impl Default for ResourceMessage {
 		Self {
 			id: resource_id_next(),
 			resource: Default::default(),
+			resourceId: Default::default(),
 			value: Default::default(),
 			users: Default::default(),
 			close_for_users: None,
@@ -173,9 +175,6 @@ async fn handle_socket(
 	let (mut tx_socket, mut rx_socket) = socket.split();
 
 	let get_notes = || {
-		if user == "public" {
-			return json!([]);
-		}
 
 		let mut chunks: ChunkVec = db.write().unwrap().get_chunks(user).into();
 		chunks.sort(SortType::Modified);
@@ -187,13 +186,10 @@ async fn handle_socket(
 
 	// [[parent,parent], [child,child]]
 	let get_subtree = |root: Option<&str>, view_type: ViewType| {
-		if user == "public" {
-			return json!([[], []]);
-		}
-		let root = root.and_then(|id| db.read().unwrap().get_chunk(id, user));
+		let root = root.and_then(|id| db.try_read().unwrap().get_chunk(id, user));
 		let subtree = 
 			// Graph
-			db.write().unwrap().subtree(
+			db.try_read().unwrap().subtree(
 				root.as_ref(),
 				&user.as_str().into(),
 				&|v| {
@@ -214,6 +210,9 @@ async fn handle_socket(
 	// the message on the instance that sent it
 	// (if it was incremented by that instance beforehand)
 	let resource_id_last = RwLock::new(0);
+	// Keep a list of explicitely acccessed chunks
+	// So we don't give away all our public chunks to everyone
+	// let access_list = Mutex::new(HashSet::default());
 
 	let handle_incoming = |m| {
 		if let Message::Text(m) = m {

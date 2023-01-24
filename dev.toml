@@ -1,4 +1,4 @@
 # For compile/debug run usage
-DB_INIT = "https://chunk.anty.dev"
-DB_PATH = "db.json.log"
+#DB_INIT = "https://chunk.anty.dev"
+DB_PATH = "db.json"
 RUST_LOG = "info"

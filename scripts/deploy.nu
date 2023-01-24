@@ -1,9 +1,11 @@
 #!/bin/nu
 
 use build.nu *
+use start.nu test
 
 export def deploy [] {
 	
+	test
 	build
 
 	docker context use anty

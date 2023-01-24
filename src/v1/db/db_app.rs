@@ -13,57 +13,82 @@ use std::{
 };
 
 impl DB {
-	/** Goes through tree and creates a View */
+	/// Goes through tree and creates a GraphView
+	///
+	/// - If root=None, iter=0 --> [Value::Null ] // We pull nothing
+	/// - If root=None, iter=1 --> [Value::Null, [ ["basab"] ] ] // We pull 1rst level
+	/// - If root=None, iter=2 --> [Value::Null, [ ["basab", [["basorb"]] ] ] ] // We pull 2nd level
 	pub fn subtree<CF, VF>(
-		&mut self,
+		&self,
 		root: Option<&Arc<RwLock<DBChunk>>>,
 		ua: &UserAccess,
-		// Function that modifies Children
+		// Function that modifies children, perhaps to sort them
 		children_fn: &CF,
 		// Function that turns Node -> View
 		view_fn: &VF,
 		iter: i32,
-	) -> Option<GraphView>
+	) -> GraphView
 	where
 		CF: Fn(Vec<Arc<RwLock<DBChunk>>>) -> Vec<Arc<RwLock<DBChunk>>>,
 		VF: Fn(&Arc<RwLock<DBChunk>>) -> Value,
 	{
-		let mut value = Value::Null;
+		// public assertion
+		if ua.user == "public" {
+			return GraphView(Value::Null, None);
+		}
 
-		if iter >= 0 {
-			let mut children = match root {
-				Some(chunk) => {
-					value = view_fn(chunk);
-					chunk.read().unwrap().children(Some(ua))
-				}
-				// Gets all direct descendents with no parents
-				None => self
-					.chunks
-					.values()
-					.filter_map(|v| {
-						if let Some(mut chunk) = v.write().ok() {
-							if chunk.has_access(ua) && chunk.parents(Some(ua)).is_empty() {
-								return Some(v.clone());
-							}
-						}
-						None
-					})
-					.collect(),
-			};
-			children = children_fn(children);
-			Some(GraphView(
-				value,
-				children
-					.into_iter()
-					.filter_map(|root| self.subtree(Some(&root), ua, children_fn, view_fn, iter - 1))
-					.collect(),
-			))
+		if let Some(chunk) = root {
+			GraphView(
+				view_fn(chunk),
+				if iter > 0 {
+					let c = chunk.read().unwrap().children(Some(ua));
+					Some(
+						children_fn(c)
+							.into_iter()
+							.map(|root| self.subtree(Some(&root), ua, children_fn, view_fn, iter - 1))
+							.collect(),
+					)
+				} else {
+					None
+				},
+			)
 		} else {
-			None
+			GraphView(
+				Value::Null,
+				if iter > 0 {
+					Some(
+						children_fn(
+							self
+								.chunks
+								.values()
+								.filter_map(|v| {
+									let mut g=false;
+									{if let Some(chunk) = v.read().ok() {
+										if chunk.has_access(ua) && chunk.parents(Some(ua)).is_empty() {
+											g=true;
+										}
+									}}
+									if g {Some(v.to_owned())}else{None}
+								})
+								.collect(),
+						)
+						.into_iter()
+						.map(|root| self.subtree(Some(&root), ua, children_fn, view_fn, iter - 1))
+						.collect(),
+					)
+				} else {
+					None
+				},
+			)
 		}
 	}
 
 	pub fn get_chunks(&mut self, user: &str) -> Vec<Arc<RwLock<DBChunk>>> {
+		// public assertion
+		if user == "public" {
+			return vec![];
+		}
+
 		self
 			.chunks
 			.values()
@@ -94,6 +119,12 @@ impl DB {
 	 * Deletes a chunk by id, returns list of users for which access changed
 	 */
 	pub fn del_chunk(&mut self, ids: HashSet<String>, user: &str) -> Result<HashSet<String>, DbError> {
+		// public assertion
+		if user == "public" {
+			error!("Public tried to delete {:?}", &ids);
+			return Err(DbError::AuthError);
+		}
+
 		let mut changed = HashSet::<String>::default();
 		let mut to_remove = HashSet::<String>::default();
 
@@ -128,7 +159,7 @@ impl DB {
 			if let Some(chunk_to_replace) = chunk_to_replace {
 				let owner = chunk_to_replace.chunk().owner.clone();
 				self.set_chunk(chunk_to_replace, owner.as_str()).unwrap();
-				
+
 				changed.insert(user.into());
 			}
 		}
@@ -147,6 +178,12 @@ impl DB {
 	/// Receives a Chunk which it validates & links, returns the list of users for which access changed
 	///
 	pub fn set_chunk(&mut self, mut chunk: DBChunk, user: &str) -> Result<HashSet<String>, DbError> {
+		// public assertion
+		if user == "public" {
+			error!("Public can't set/modify a chunk.");
+			return Err(DbError::AuthError);
+		}
+
 		let diff_users;
 		let diff_props;
 		if let Some(chunk_old) = self.chunks.get(&chunk.chunk().id).and_then(|v| Some(v.clone())) {
@@ -336,7 +373,7 @@ mod tests {
 
 	use serde_json::{json, Value};
 
-	use crate::v1::db::{db_chunk::DBChunk, Access, Chunk, ChunkId, ChunkView, ViewType};
+	use crate::v1::db::{db_chunk::DBChunk, Access, Chunk, ChunkId, ChunkView, GraphView, ViewType};
 
 	use super::DB;
 	#[test]
@@ -355,11 +392,148 @@ mod tests {
 	fn sharing() {
 		let mut db = DB::default();
 
-		let c_notes: DBChunk = "# Notes\nshare: poca w".into();
-		println!("{:?}",c_notes.props());
+		let c_notes: DBChunk = "# Notes\nshare: poca w, nina a".into();
+		println!("{:?}", c_notes.props());
 		let id_notes = c_notes.chunk().id.clone();
 		assert!(db.set_chunk(c_notes, "john").is_ok());
-		assert_eq!(db.set_chunk((id_notes.as_str(), "# Notes\nHello :)\nshare: poca w").into(), "poca"), Ok(HashSet::default()));
+
+		assert_eq!(
+			db.set_chunk(
+				(id_notes.as_str(), "# Notes\nHello :)\nshare: poca w, nina a").into(),
+				"poca"
+			),
+			Ok(HashSet::default())
+		);
+		assert!(db
+			.set_chunk((id_notes.as_str(), "# Notes\nshare: poca w, nina r").into(), "poca")
+			.is_err());
+		// let c_notes: DBChunk = "# Notes\nHello :)\nshare: poca w, nina a".into();
+		// println!("{:?}", c_notes.props());
+		assert!(db
+			.set_chunk(
+				(id_notes.as_str(), "# Notes\nHello :)\nshare: poca w, nina a").into(),
+				"nina"
+			)
+			.is_ok());
+		assert!(db
+			.set_chunk((id_notes.as_str(), "# Notes\nHello :)\nshare: nina a").into(), "nina")
+			.is_ok());
+		assert!(db
+			.set_chunk(
+				(id_notes.as_str(), "# Notes\nHello :)\nshare: poca rnina a").into(),
+				"nina"
+			)
+			.is_err()); // Errors out because nina would be deleting her own admin access
+		assert!(db
+			.set_chunk(
+				(id_notes.as_str(), "# Notes\nHello :)\nshare: poca r,nina a").into(),
+				"nina"
+			)
+			.is_ok());
+		assert!(db.del_chunk(HashSet::from([id_notes]), "nina").is_ok()); // Nina can delete as well
+	}
+	// Make sure users can't see public documents in their views
+	#[test]
+	fn visibility() {
+		let mut db = DB::default();
+
+		// John creates a chunk
+		let c_notes: DBChunk = "# Notes\nshare: public a, public r".into();
+		let id_notes = c_notes.chunk().id.clone();
+		assert!(db.set_chunk(c_notes, "john").is_ok());
+		{
+			// Test visibility
+
+			assert_eq!(db.get_chunks("nina").len(), 0); // Nina can't see anything
+			assert_eq!(db.get_chunks("john").len(), 1); // John can see his own
+			assert_eq!(db.get_chunks("public").len(), 0); // Public can't see anything
+
+			assert_eq!(
+				db.subtree(None, &"nina".into(), &|v| v, &|v| json!(ChunkId::from(v)), 1),
+				GraphView(Value::Null, Some(vec![]))
+			); // Nina can't see anything
+			assert_eq!(
+				db.subtree(None, &"john".into(), &|v| v, &|v| json!(ChunkId::from(v)), 1),
+				GraphView(Value::Null, Some(vec![GraphView(json!(id_notes), None)]))
+			); // John can see his own
+			assert_eq!(
+				db.subtree(None, &"public".into(), &|v| v, &|v| json!(ChunkId::from(v)), 1),
+				GraphView(Value::Null, None)
+			); // Public can't see anything
+		}
+
+		// Public tries creating a chunk but is denied
+		let c_notes: DBChunk = "# Notes 2\nshare: public a, john a".into();
+		assert!(db.set_chunk(c_notes, "public").is_err());
+		// Nina creates a chunk, giving john admin access
+		let c_notes: DBChunk = "# Notes 2\nshare: public a, john a".into();
+		let id_notes2 = c_notes.chunk().id.clone();
+		assert!(db.set_chunk(c_notes, "nina").is_ok());
+
+		{
+			// Test visibility
+
+			assert_eq!(db.get_chunks("nina").len(), 1);
+			assert_eq!(db.get_chunks("john").len(), 2);
+			assert_eq!(db.get_chunks("public").len(), 0); // Public can't see anything
+
+			assert_eq!(
+				db.subtree(None, &"nina".into(), &|v| v, &|v| json!(ChunkId::from(v)), 1),
+				GraphView(Value::Null, Some(vec![GraphView(json!(id_notes2), None)]))
+			);
+			assert_eq!(
+				db.subtree(None, &"john".into(), &|v| v, &|v| json!(ChunkId::from(v)), 1)
+					.1
+					.unwrap()
+					.len(),
+				2
+			);
+			assert_eq!(
+				db.subtree(None, &"public".into(), &|v| v, &|v| json!(ChunkId::from(v)), 1),
+				GraphView(Value::Null, None)
+			); // Public can't see anything
+		}
+
+		// Nina creates another chunk, giving john also admin access
+		let c_notes: DBChunk = format!("# Notes 3 -> {id_notes2}\nshare: public a, john a")
+			.as_str()
+			.into();
+		let id_notes3 = c_notes.chunk().id.clone();
+		assert!(db.set_chunk(c_notes, "nina").is_ok());
+
+		{
+			// Test visibility
+
+			assert_eq!(db.get_chunks("nina").len(), 2);
+			assert_eq!(db.get_chunks("john").len(), 3);
+			assert_eq!(db.get_chunks("public").len(), 0); // Public can't see anything
+
+			assert_eq!(
+				db.subtree(None, &"nina".into(), &|v| v, &|v| json!(ChunkId::from(v)), 1),
+				GraphView(Value::Null, Some(vec![GraphView(json!(id_notes2), None)]))
+			);
+			assert_eq!(
+				db.subtree(None, &"nina".into(), &|v| v, &|v| json!(ChunkId::from(v)), 2),
+				GraphView(
+					Value::Null,
+					Some(vec![GraphView(
+						json!(id_notes2),
+						Some(vec![GraphView(json!(id_notes3), None)])
+					)])
+				)
+			);
+			assert_eq!(
+				db.subtree(None, &"john".into(), &|v| v, &|v| json!(ChunkId::from(v)), 1)
+					.1
+					.unwrap()
+					.len(),
+				2
+			);
+			assert_eq!(
+				db.subtree(None, &"public".into(), &|v| v, &|v| json!(ChunkId::from(v)), 1),
+				GraphView(Value::Null, None)
+			); // Public can't see anything
+		}
 	}
 	/// Create a "Notes"
 	/// Modify "Notes" 10 sec after
@@ -378,7 +552,7 @@ mod tests {
 		c_notes.created += 10;
 		c_notes.modified += 10;
 		let mod_notes = c_notes.modified;
-		db.set_chunk(DBChunk::from(c_notes), "john").unwrap();
+		db.set_chunk(c_notes.into(), "john").unwrap();
 
 		let notes = db.get_chunk(&id_notes, "john").unwrap();
 		{
@@ -444,28 +618,24 @@ mod tests {
 			.map(|v| ChunkView::from((v, "john")))
 			.collect();
 
-		let subtree = db
-			.subtree(None, &"john".into(), &|v| v, &|v| json!(ChunkId::from(v)), 2)
-			.unwrap();
+		let subtree = db.subtree(None, &"john".into(), &|v| v, &|v| json!(ChunkId::from(v)), 2);
 		// println!("{subtree:?}");
 		assert_eq!(
-			subtree.1.len(),
+			subtree.1.unwrap().len(),
 			1,
 			"Children should be 1 as john has 1 chunk without parents"
 		);
 
-		let subtree = db
-			.subtree(
-				db.get_chunk(id_notes.as_str(), "john").as_ref(),
-				&"john".into(),
-				&|v| v,
-				&|v| json!(ChunkId::from(v)),
-				2,
-			)
-			.unwrap();
+		let subtree = db.subtree(
+			db.get_chunk(id_notes.as_str(), "john").as_ref(),
+			&"john".into(),
+			&|v| v,
+			&|v| json!(ChunkId::from(v)),
+			2,
+		);
 		// println!("{subtree:?}");
 		assert_eq!(
-			subtree.1.len(),
+			subtree.1.unwrap().len(),
 			1,
 			"Children should be 1 as x has 1 chunk without parents"
 		);

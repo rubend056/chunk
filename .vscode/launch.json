@@ -19,6 +19,13 @@
 					"kind": "bin"
 				}
 			},
+			"env": {
+				"WEB_DIST": "web/dist/web",
+				"PAGE_DIST": "web/dist/web",
+				"BACKEND_DIST": "web/dist/backend",
+				"DB_PATH": "db.json",
+				"RUST_LOG": "trace"
+			},
 			"args": [],
 			"cwd": "${workspaceFolder}"
 		},
@@ -38,7 +45,9 @@
 					"kind": "bin",
 				}
 			},
-			"args": ["--test-threads=1"],
+			"args": [
+				"--test-threads=1"
+			],
 			"cwd": "${workspaceFolder}"
 		}
 	]

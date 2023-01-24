@@ -118,6 +118,11 @@ pub fn diff_calc(left: &str, right: &str) -> Vec<String> {
 	out
 }
 
+pub fn log_env() {
+	let j = env::vars().filter(|(k, _)| k.contains("REGEX_") || k.contains("DB_") || k == "HOST" || k == "WEB_DIST");
+	j.for_each(|(k, v)| println!("{k}: {v}"));
+}
+
 // /// Has to return something that's easy to merge into current data
 // /// Easiest thing to merge would be index + data. Assuming iteration of front+back is same
 // #[derive(Serialize, Default)]

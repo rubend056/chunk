@@ -2,17 +2,10 @@ use argon2::{
 	password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
 	Argon2,
 };
-use serde::{Deserialize, Serialize};
 
 use crate::utils::{get_secs, DbError, REGEX_PASSWORD, REGEX_USERNAME};
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct User {
-	pub user: String,
-	pass: String, // PHC String
-	#[serde(default = "get_secs")]
-	pub not_before: u64,
-}
+use super::{blacklist::BLACKLIST, User};
 
 impl User {
 	fn verify_pass(&self, pass: &str) -> bool {
@@ -39,7 +32,7 @@ impl User {
 		)
 	}
 	pub fn new(user: &str, pass: &str) -> Result<Self, DbError> {
-		if !REGEX_USERNAME.is_match(user) {
+		if !REGEX_USERNAME.is_match(user) || BLACKLIST.iter().any(|v| user.contains(v)) {
 			return Err(DbError::InvalidUsername);
 		}
 
