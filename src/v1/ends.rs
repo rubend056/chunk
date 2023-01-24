@@ -4,8 +4,8 @@ use super::db::db_chunk::DBChunk;
 use super::db::ChunkView;
 use super::format::value_to_html;
 use super::socket::{ResourceMessage, ResourceSender};
-use crate::utils::{MEDIA_FOLDER, PAGE_DIST};
-use crate::v1::db::{Access, Chunk};
+use crate::utils::{MEDIA_FOLDER};
+use crate::v1::db::{Chunk};
 use crate::MediaEntry;
 use crate::{utils::DbError, v1::*};
 use axum::body::StreamBody;
@@ -26,7 +26,7 @@ use lazy_static::lazy_static;
 use log::trace;
 use proquint::Quintable;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+
 use std::collections::HashSet;
 use tokio::fs;
 
@@ -80,7 +80,7 @@ pub async fn page_get_id(
 ) -> Result<impl IntoResponse, DbError> {
 	lazy_static! {
 		static ref PAGE: String =
-			std::fs::read_to_string(std::env::var("PAGE_DIST").unwrap_or("web".into()) + "/page.html").unwrap();
+			std::fs::read_to_string(std::env::var("PAGE_DIST").unwrap_or_else(|_| "web".into()) + "/page.html").unwrap();
 	};
 	if let Some(chunk) = db.read().unwrap().get_chunk(&id, &user_claims.user) {
 		let mut title = "Page".into();
@@ -150,7 +150,7 @@ pub async fn chunks_put(
 	// They should request an update of their active view that uses chunks
 	// upon this request
 	tx_r
-		.send(ResourceMessage::from(("chunks", users_to_notify.clone())))
+		.send(ResourceMessage::from(("chunks", users_to_notify)))
 		.unwrap();
 
 	// Notifies users which already have access, of the note's new content
@@ -251,11 +251,10 @@ pub struct MediaPostResponse {
 	_type: infer::MatcherType,
 }
 
-/**
-- [ ] Uploading to POST `api/media` will
-	- create `data/media` if it doesn't exist
-	- save under `data/media/<32bit_hash_proquint>`, return error `<hash> exists` if exists already, else, return `<hash>`.
-*/
+
+/// - [ ] Uploading to POST `api/media` will
+/// - create `data/media` if it doesn't exist
+/// - save under `data/media/<32bit_hash_proquint>`, return error `<hash> exists` if exists already, else, return `<hash>`.
 pub async fn media_post(
 	// Extension(db): Extension<DB>,
 	Extension(cache): Extension<Cache>,
@@ -279,8 +278,7 @@ pub async fn media_post(
 
 	// Do conversion if necessary
 	let _type = infer::get(&body);
-	let mut matcher_type = _type
-		.and_then(|v| Some(v.matcher_type()))
+	let mut matcher_type = _type.map(|v| v.matcher_type())
 		.unwrap_or(infer::MatcherType::Custom);
 
 	// Don't perform conversion/file write if we have this id.
@@ -352,7 +350,7 @@ pub async fn media_post(
 			id.clone(),
 			crate::MediaEntry::Entry {
 				user: user_claims.user,
-				_type: matcher_type.clone(),
+				_type: matcher_type,
 			},
 		);
 	}
@@ -364,7 +362,7 @@ pub async fn media_post(
 }
 
 /** Used as a magic static value for data cloning */
-pub static MAGIC_BEAN: &'static str = "alkjgblnvcxlk_BANDFLKj";
+pub static MAGIC_BEAN: &str = "alkjgblnvcxlk_BANDFLKj";
 /**
  * Endpoint allows other servers to clone this one's data
  */

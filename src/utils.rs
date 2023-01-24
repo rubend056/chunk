@@ -2,8 +2,8 @@ use lazy_static::lazy_static;
 use proquint::Quintable;
 use rand::prelude::*;
 use regex::Regex;
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde::Serialize;
+
 use std::{
 	env,
 	time::{SystemTime, UNIX_EPOCH},
@@ -33,14 +33,16 @@ lazy_static! {
 lazy_static! {
 	pub static ref DB_PATH: Option<String> = env::var("DB_PATH").ok();
 	pub static ref DB_INIT: Option<String> = env::var("DB_INIT").ok();
-	pub static ref DB_BACKUP_FOLDER: String = env::var("DB_BACKUP_FOLDER").unwrap_or("backups".into());
-	pub static ref MEDIA_FOLDER: String = env::var("MEDIA_FOLDER").unwrap_or("media".into());
-	pub static ref CACHE_PATH: String = env::var("CACHE_PATH").unwrap_or("cache.json".into());
-	pub static ref WEB_DIST: String = env::var("WEB_DIST").unwrap_or("web".into());
-	pub static ref PAGE_DIST: String = env::var("PAGE_DIST").unwrap_or("web".into());
-	pub static ref BACKEND_DIST: String = env::var("BACKEND_DIST").unwrap_or("backend".into());
-	pub static ref HOST: String =
-		env::var("HOST").unwrap_or(format!("0.0.0.0:{}", env::var("PORT").unwrap_or("4000".into())));
+	pub static ref DB_BACKUP_FOLDER: String = env::var("DB_BACKUP_FOLDER").unwrap_or_else(|_| "backups".into());
+	pub static ref MEDIA_FOLDER: String = env::var("MEDIA_FOLDER").unwrap_or_else(|_| "media".into());
+	pub static ref CACHE_PATH: String = env::var("CACHE_PATH").unwrap_or_else(|_| "cache.json".into());
+	pub static ref WEB_DIST: String = env::var("WEB_DIST").unwrap_or_else(|_| "web".into());
+	pub static ref PAGE_DIST: String = env::var("PAGE_DIST").unwrap_or_else(|_| "web".into());
+	pub static ref BACKEND_DIST: String = env::var("BACKEND_DIST").unwrap_or_else(|_| "backend".into());
+	pub static ref HOST: String = env::var("HOST").unwrap_or(format!(
+		"0.0.0.0:{}",
+		env::var("PORT").unwrap_or_else(|_| "4000".into())
+	));
 }
 
 pub const KEYWORD_BLACKLIST: [&str; 12] = [
@@ -62,12 +64,7 @@ pub fn standardize(v: &str) -> String {
 			' ' => '_',
 			_ => v,
 		})
-		.filter(|v| match v {
-			'a'..='z' => true,
-			'0'..='9' => true,
-			'_' => true,
-			_ => false,
-		})
+		.filter(|v| matches!(v, 'a'..='z' | '0'..='9' | '_'))
 		.collect()
 }
 
@@ -92,7 +89,7 @@ pub fn diff_calc(left: &str, right: &str) -> Vec<String> {
 	let out: Vec<String> = diffs.iter().fold(vec![], |mut acc, v| {
 		match *v {
 			Left(_l) => {
-				if acc.last().and_then(|v| Some(v.starts_with("D"))) == Some(true) {
+				if acc.last().map(|v| v.starts_with('D')) == Some(true) {
 					// Add 1
 					*acc.last_mut().unwrap() = format!("D{}", (&acc.last().unwrap()[1..].parse::<u32>().unwrap() + 1));
 				} else {
@@ -100,7 +97,7 @@ pub fn diff_calc(left: &str, right: &str) -> Vec<String> {
 				}
 			}
 			Both(_, _) => {
-				if acc.last().and_then(|v| Some(v.starts_with("K"))) == Some(true) {
+				if acc.last().map(|v| v.starts_with('K')) == Some(true) {
 					// Add 1
 					*acc.last_mut().unwrap() = format!("K{}", (&acc.last().unwrap()[1..].parse::<u32>().unwrap() + 1));
 				} else {
@@ -144,7 +141,6 @@ pub fn log_env() {
 // 		self.index.is_none() && self.page_size.is_none()
 // 	}
 // }
-
 
 // pub fn maybe_paginate<T, E: Serialize, I: IntoIterator<Item = T>, F: Fn(T) -> E>(
 // 	(query, iter, map): (&PageQuery, I, &F),

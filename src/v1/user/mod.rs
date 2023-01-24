@@ -2,7 +2,7 @@
 use serde::{Deserialize, Serialize};
 use crate::utils::{get_secs};
 
-pub mod user;
+mod src;
 mod blacklist;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

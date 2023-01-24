@@ -1,11 +1,11 @@
-use super::{db_auth::DBAuth, db_chunk::DBChunk, Access, Chunk, DBData, GraphView, UserAccess, DB};
+use super::{db_auth::DBAuth, db_chunk::DBChunk, Access, DBData, GraphView, UserAccess, DB};
 use crate::utils::{diff_calc, DbError};
-use lazy_static::lazy_static;
+
 /**
  * A DB without a reference (normalized title) implementation and actual dynamic memory pointers instead of repetitive lookups.
  * Should be orders of magnitud simpler and faster.
  */
-use log::{error, info};
+use log::error;
 use serde_json::{json, Value};
 use std::{
 	collections::HashSet,
@@ -62,13 +62,19 @@ impl DB {
 								.chunks
 								.values()
 								.filter_map(|v| {
-									let mut g=false;
-									{if let Some(chunk) = v.read().ok() {
-										if chunk.has_access(ua) && chunk.parents(Some(ua)).is_empty() {
-											g=true;
+									let mut g = false;
+									{
+										if let Ok(chunk) = v.read() {
+											if chunk.has_access(ua) && chunk.parents(Some(ua)).is_empty() {
+												g = true;
+											}
 										}
-									}}
-									if g {Some(v.to_owned())}else{None}
+									}
+									if g {
+										Some(v.to_owned())
+									} else {
+										None
+									}
 								})
 								.collect(),
 						)
@@ -93,7 +99,7 @@ impl DB {
 			.chunks
 			.values()
 			.filter_map(|v| {
-				if let Some(mut chunk) = v.write().ok() {
+				if let Ok(chunk) = v.write() {
 					if chunk.has_access(&user.into()) {
 						return Some(v.clone());
 					}
@@ -102,9 +108,8 @@ impl DB {
 			})
 			.collect()
 	}
-	/**
-	 * Gets a chunk by id
-	 */
+
+	///  Gets a chunk by id
 	pub fn get_chunk(&self, id: &str, user: &str) -> Option<Arc<RwLock<DBChunk>>> {
 		self.chunks.get(id).and_then(|chunk_ref| {
 			let chunk = chunk_ref.write().unwrap();
@@ -115,9 +120,9 @@ impl DB {
 			}
 		})
 	}
-	/**
-	 * Deletes a chunk by id, returns list of users for which access changed
-	 */
+
+	/// Deletes a chunk by id, returns list of users for which access changed
+
 	pub fn del_chunk(&mut self, ids: HashSet<String>, user: &str) -> Result<HashSet<String>, DbError> {
 		// public assertion
 		if user == "public" {
@@ -186,7 +191,7 @@ impl DB {
 
 		let diff_users;
 		let diff_props;
-		if let Some(chunk_old) = self.chunks.get(&chunk.chunk().id).and_then(|v| Some(v.clone())) {
+		if let Some(chunk_old) = self.chunks.get(&chunk.chunk().id).cloned() {
 			// Updating
 			let chunk_old = chunk_old.write().unwrap();
 
@@ -213,7 +218,7 @@ impl DB {
 		self.link_chunk(&chunk, None)?;
 		{
 			let mut chunk = chunk.write().unwrap();
-			chunk.invalidate(&vec!["modified".into()], true);
+			chunk.invalidate(&vec!["modified"], true);
 		}
 
 		self.chunks.insert(id, chunk);
@@ -228,7 +233,7 @@ impl DB {
 	) -> Result<(HashSet<String>, Vec<String>, Arc<RwLock<DBChunk>>), DbError> {
 		if let Some(last_value) = self
 			.get_chunk(&chunk.chunk().id, user)
-			.and_then(|v| Some(v.read().unwrap().chunk().value.to_owned()))
+			.map(|v| v.read().unwrap().chunk().value.to_owned())
 		{
 			let value = chunk.chunk().value.clone();
 			let id = chunk.chunk().id.clone();
@@ -240,7 +245,7 @@ impl DB {
 		Err(DbError::NotFound)
 	}
 	pub fn link_all(&mut self) -> Result<(), DbError> {
-		let chunks = self.chunks.values().map(|v| v.clone()).collect::<Vec<_>>();
+		let chunks = self.chunks.values().cloned().collect::<Vec<_>>();
 		for chunk in chunks {
 			self.link_chunk(&chunk, None)?;
 		}
@@ -277,7 +282,7 @@ impl DB {
 
 					let parent_weaks = parent_ids
 						.iter()
-						.filter_map(|id| self.chunks.get(id).and_then(|c| Some(Arc::downgrade(c))));
+						.filter_map(|id| self.chunks.get(id).map(Arc::downgrade));
 
 					chunk_lock.parents.extend(parent_weaks);
 				}
@@ -366,14 +371,11 @@ impl From<&DB> for DBData {
 #[cfg(test)]
 mod tests {
 
-	use std::{
-		collections::HashSet,
-		sync::{Arc, RwLock},
-	};
+	use std::collections::HashSet;
 
 	use serde_json::{json, Value};
 
-	use crate::v1::db::{db_chunk::DBChunk, Access, Chunk, ChunkId, ChunkView, GraphView, ViewType};
+	use crate::v1::db::{db_chunk::DBChunk, Chunk, ChunkId, ChunkView, GraphView, ViewType};
 
 	use super::DB;
 	#[test]
@@ -384,7 +386,7 @@ mod tests {
 		let id_notes = c_notes.chunk().id.clone();
 		assert!(db.set_chunk(c_notes, "john").is_ok());
 		assert_eq!(
-			db.del_chunk([id_notes.clone()].into(), "john"),
+			db.del_chunk([id_notes].into(), "john"),
 			Ok(HashSet::from(["john".into()]))
 		);
 	}
@@ -582,7 +584,7 @@ mod tests {
 		let mod_note1 = mod_notes + 10;
 		chunk_note1.modified = mod_note1;
 		let c_note1 = DBChunk::from(chunk_note1);
-		let id_note1 = c_note1.chunk().id.clone();
+		let _id_note1 = c_note1.chunk().id.clone();
 
 		assert!(db.set_chunk(c_note1, "john").is_ok());
 
@@ -609,10 +611,10 @@ mod tests {
 		);
 
 		let c_note1 = DBChunk::from(format!("# Note 1 -> {}\n", &id_notes).as_str());
-		let id_note1 = c_note1.chunk().id.clone();
+		let _id_note1 = c_note1.chunk().id.clone();
 		assert!(db.set_chunk(c_note1, "john").is_ok());
 
-		let all: Vec<ChunkView> = db
+		let _all: Vec<ChunkView> = db
 			.get_chunks("john")
 			.into_iter()
 			.map(|v| ChunkView::from((v, "john")))

@@ -202,7 +202,7 @@ impl ChunkVec {
 			-(match &t {
 				SortType::Created => v.read().unwrap().chunk().created,
 				SortType::Modified => v.read().unwrap().chunk().modified,
-				SortType::ModifiedDynamic(ua) => v.write().unwrap().get_prop_dynamic("modified", &ua).unwrap_or_default(),
+				SortType::ModifiedDynamic(ua) => v.write().unwrap().get_prop_dynamic("modified", ua).unwrap_or_default(),
 			} as i64)
 		})
 	}
@@ -212,9 +212,9 @@ impl From<Vec<Arc<RwLock<DBChunk>>>> for ChunkVec {
 		Self(v)
 	}
 }
-impl<T: From<Arc<RwLock<DBChunk>>>> Into<Vec<T>> for ChunkVec {
-	fn into(self) -> Vec<T> {
-		self.0.into_iter().map(|v| v.into()).collect()
+impl<T: From<Arc<RwLock<DBChunk>>>> From<ChunkVec> for Vec<T> {
+	fn from(val: ChunkVec) -> Self {
+		val.0.into_iter().map(|v| v.into()).collect()
 	}
 }
 
@@ -289,7 +289,7 @@ impl From<(&str, &str, &str)> for Chunk {
 impl From<(Option<&str>, &str, &str)> for Chunk {
 	fn from((id, value, owner): (Option<&str>, &str, &str)) -> Self {
 		Self {
-			id: id.and_then(|v| Some(v.into())).unwrap_or(gen_proquint()),
+			id: id.map(|v| v.into()).unwrap_or_else(gen_proquint),
 			value: value.to_owned(),
 			owner: owner.to_owned(),
 			..Default::default()

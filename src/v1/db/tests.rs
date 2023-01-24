@@ -13,8 +13,8 @@ fn init() -> DB {
 	assert!(db.auth.new_user("nina", "444444").is_ok());
 	// assert!(db.auth.new_user("john", "333333").is_ok());
 	
-	let mut chunk:DBChunk = ("# Todo \n").into();
-	let mut id = chunk.chunk().id.clone();
+	let chunk:DBChunk = ("# Todo \n").into();
+	let _id = chunk.chunk().id.clone();
 	assert!(db.set_chunk(chunk, "nina").is_ok());
 	// assert!(db
 	// 	.set_chunk(("# Chores -> Todo\n - Vaccum\naccess: john r", "nina").into(), "nina")
@@ -34,12 +34,12 @@ fn linking() {
 	let mut db = init();
 	
 	{
-		let all = db.chunks.values().map(|v|v.read().unwrap()).collect::<Vec<_>>();
+		let _all = db.chunks.values().map(|v|v.read().unwrap()).collect::<Vec<_>>();
 		// println!("{all:?}");
 	}
-	db.link_all();
+	db.link_all().unwrap();
 	{
-		let all = db.chunks.values().map(|v|v.read().unwrap()).collect::<Vec<_>>();
+		let _all = db.chunks.values().map(|v|v.read().unwrap()).collect::<Vec<_>>();
 		// println!("{all:?}");
 	}
 }

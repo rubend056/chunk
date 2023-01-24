@@ -39,7 +39,7 @@ pub async fn backup_service(cache: Arc<RwLock<Cache>>, db: DB, mut shutdown_rx: 
 
 			let dbdata = serde_json::to_string(&DBData::from(&*db.read().unwrap())).unwrap();
 
-			if let Err(err) = fs::write(&backup_file, &dbdata) {
+			if let Err(err) = fs::write(&backup_file, dbdata) {
 				error!("Couldn't backup to: {err:?}");
 			} else {
 				info!("Backed up to {backup_file:?}.");

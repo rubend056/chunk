@@ -13,7 +13,7 @@ impl User {
 		let parsed_hash = PasswordHash::new(&self.pass).expect("Error parsing existing password field");
 
 		// Compare pass hash vs PasswordHash
-		if let Err(_) = Argon2::default().verify_password(pass.as_bytes(), &parsed_hash) {
+		if Argon2::default().verify_password(pass.as_bytes(), &parsed_hash).is_err() {
 			return false;
 		};
 		true
@@ -38,7 +38,7 @@ impl User {
 
 		Ok(User {
 			user: user.into(),
-			pass: User::hash(&pass)?,
+			pass: User::hash(pass)?,
 			not_before: get_secs(),
 		})
 	}

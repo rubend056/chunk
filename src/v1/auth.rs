@@ -29,7 +29,7 @@ pub async fn login(
 	let db = db.write().unwrap();
 	db.auth
 		.login(&user, &pass)
-		.and_then(|_| {
+		.map(|_| {
 			// Create token
 
 			let mut claims = Claims::new().unwrap();
@@ -53,18 +53,18 @@ pub async fn login(
 			// Generate the keys and sign the claims.
 			let pub_token = public::sign(&KP.secret, &claims, None, None).unwrap();
 
-			Ok([(
+			[(
 				header::SET_COOKIE,
 				format!(
 					"auth={pub_token}; SameSite=Strict; Max-Age={}; Path=/;{}",
 					60/*sec*/*60/*min*/*24/*hr*/*7, /*days*/ /*= a week in seconds*/
 					if cfg!(debug_assertions)  { "" } else { " Secure;" }
 				),
-			)])
+			)]
 		})
-		.or_else(|err| {
+		.map_err(|err| {
 			error!("Failed login for '{}' with pass '{}': {:?}.", &user, &pass, &err);
-			Err(err)
+			err
 		})
 }
 pub async fn register(
@@ -75,13 +75,13 @@ pub async fn register(
 
 	db.auth
 		.new_user(&user, &pass)
-		.and_then(|_| {
+		.map(|_| {
 			info!("User created '{}'.", &user);
-			Ok("User created.")
+			"User created."
 		})
-		.or_else(|err| {
+		.map_err(|err| {
 			error!("Failed register for '{}' with pass '{}': {:?}.", &user, &pass, &err);
-			Err(err)
+			err
 		})
 }
 pub async fn reset(
@@ -92,13 +92,13 @@ pub async fn reset(
 
 	db.auth
 		.reset(&user, &pass, &old_pass)
-		.and_then(|_| {
+		.map(|_| {
 			info!("User password reset '{user}'.");
-			Ok("User pass reset.")
+			"User pass reset."
 		})
-		.or_else(|err| {
+		.map_err(|err| {
 			error!("Failed password reset for '{user}' with old_pass '{old_pass}': {err:?}.");
-			Err(err)
+			err
 		})
 }
 pub async fn logout_all(
@@ -118,7 +118,7 @@ pub async fn logout_all(
 
 	tx_r
 		.send(ResourceMessage {
-			close_for_users: Some([user_claims.user.clone()].into()),
+			close_for_users: Some([user_claims.user].into()),
 			..Default::default()
 		})
 		.unwrap();
@@ -153,17 +153,14 @@ pub async fn authenticate<B>(mut req: Request<B>, next: Next<B>) -> Result<Respo
 		.and_then(|header| {
 			// info!("Header tostr {:?}", header.to_str().ok());
 			header.to_str().ok()
-		})
-		.and_then(|v| {
-			Some(v.split(";").fold(vec![], |mut acc, v| {
-				let kv = v.split("=").collect::<Vec<_>>();
+		}).map(|v| v.split(';').fold(vec![], |mut acc, v| {
+				let kv = v.split('=').collect::<Vec<_>>();
 				if kv.len() == 2 {
 					acc.push((kv[0].trim(), kv[1]))
 				}
 				acc
-			}))
-		}) {
-		if let Some(auth_value) = auth_header.iter().find(|(k, _v)| *k == "auth").and_then(|v| Some(v.1)) {
+			})) {
+		if let Some(auth_value) = auth_header.iter().find(|(k, _v)| *k == "auth").map(|v| v.1) {
 			if let Some((token, _user_claims)) = get_valid_token(auth_value) {
 				let claims = token.payload_claims().unwrap();
 				let user_claim = claims.get_claim("user").unwrap().as_str().unwrap();

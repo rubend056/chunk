@@ -7,23 +7,20 @@ use futures::future::join;
 use hyper::StatusCode;
 use lib::{
 	backup::backup_service,
-	utils::{get_secs, log_env, CACHE_PATH, DB_BACKUP_FOLDER, HOST, SECS_IN_DAY, SECS_IN_HOUR, WEB_DIST},
+	utils::{log_env, HOST, WEB_DIST},
 	v1::{
 		self, auth,
-		db::DBData,
-		ends::{self, DB},
+		ends::{self},
 		socket::{websocket_handler, ResourceMessage},
 	},
 	Cache,
 };
 use log::{error, info};
-use serde::{Deserialize, Serialize};
+
 use std::{
-	collections::HashMap,
-	env, fs,
 	future::ready,
 	net::SocketAddr,
-	path::{Path, PathBuf},
+	path::{PathBuf},
 	str::FromStr,
 	sync::{Arc, RwLock},
 	time::Duration,
@@ -31,7 +28,6 @@ use std::{
 use tokio::{
 	signal::unix::{signal, SignalKind},
 	sync::{broadcast, watch},
-	time,
 };
 use tower_http::{
 	services::{ServeDir, ServeFile},
@@ -62,7 +58,7 @@ async fn main() {
 			.handle_error(|_| ready(StatusCode::INTERNAL_SERVER_ERROR));
 
 		Router::new()
-			.nest_service(&assets_path, assets_service)
+			.nest_service(assets_path, assets_service)
 			.fallback_service(
 				get_service(ServeFile::new(index_file)).handle_error(|_| ready(StatusCode::INTERNAL_SERVER_ERROR)),
 			)
@@ -115,7 +111,7 @@ async fn main() {
 	info!("Listening on '{}'.", addr);
 
 	// Create server
-	let server = axum::Server::bind(&addr.into())
+	let server = axum::Server::bind(&addr)
 		.serve(app.into_make_service_with_connect_info::<SocketAddr>())
 		.with_graceful_shutdown(async move {
 			if let Err(err) = shutdown_rx.changed().await {

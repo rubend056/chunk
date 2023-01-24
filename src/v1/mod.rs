@@ -32,7 +32,7 @@ pub async fn init() -> DB {
 			match reqwest::get(format!("{db_init}/api/mirror/{MAGIC_BEAN}")).await {
 				Ok(v) => {
 					if v.status() != StatusCode::OK {
-						return failover(&db_init);
+						return failover(db_init);
 					}
 					let dbdata = serde_json::from_slice::<DBData>(&v.bytes().await.unwrap()).unwrap();
 					info!(
@@ -43,13 +43,13 @@ pub async fn init() -> DB {
 					);
 					DB::from(dbdata)
 				}
-				_ => failover(&db_init),
+				_ => failover(db_init),
 			}
 		}
 		None => match DB_PATH.clone() {
 			Some(db_path) => match fs::read_to_string(&db_path) {
 				Ok(db_json) => {
-					let db_in = serde_json::from_str::<DBData>(&db_json).expect(&format!("Couldn't read {}", &db_path));
+					let db_in = serde_json::from_str::<DBData>(&db_json).unwrap_or_else(|_| panic!("Couldn't read {}", &db_path));
 
 					info!("Read {} for {} chunks", &db_path, db_in.chunks.len());
 

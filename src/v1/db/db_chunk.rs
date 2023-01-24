@@ -1,11 +1,10 @@
 use crate::utils::{standardize, REGEX_ACCESS, REGEX_PROPERTY, REGEX_TITLE, REGEX_USERNAME};
 use lazy_static::lazy_static;
-use log::{error, info};
+use log::error;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use std::{
 	collections::{HashMap, HashSet},
-	default,
 	fmt::Debug,
 	sync::{Arc, RwLock, Weak},
 };
@@ -48,7 +47,7 @@ impl Debug for DynamicProperty {
  * Chunk Meta will now own Chunk instead of it being a tuple in DB. Hopefully making it easier to work with
  */
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct DBChunk {
 	chunk: Chunk,
 
@@ -70,19 +69,7 @@ pub struct DBChunk {
 	///  children, whoever modifies these refs, has to make sure there are no circular references
 	pub children: Vec<Weak<RwLock<DBChunk>>>,
 }
-impl Default for DBChunk {
-	fn default() -> Self {
-		Self {
-			chunk: Default::default(),
-			props: Default::default(),
-			props_dynamic_custom: Default::default(),
-			props_per_user: Default::default(),
-			parents: Default::default(),
-			linked: false,
-			children: Default::default(),
-		}
-	}
-}
+
 impl<T: Into<Chunk>> From<T> for DBChunk {
 	fn from(chunk: T) -> Self {
 		let mut v = Self {
@@ -94,10 +81,10 @@ impl<T: Into<Chunk>> From<T> for DBChunk {
 	}
 }
 
-fn access_f(v: &mut DBChunk, others: Vec<Arc<RwLock<DBChunk>>>, ua: &UserAccess) -> Value {
-	// v.get_prop::<Vec<UserAccess>>("access")
-	Value::Null
-}
+// fn access_f(_v: &mut DBChunk, _others: Vec<Arc<RwLock<DBChunk>>>, _ua: &UserAccess) -> Value {
+// 	// v.get_prop::<Vec<UserAccess>>("access")
+// 	Value::Null
+// }
 fn modified_f(v: &mut DBChunk, others: Vec<Arc<RwLock<DBChunk>>>, ua: &UserAccess) -> Value {
 	let modified = others.iter().fold(v.chunk.modified, |acc, v| {
 		std::cmp::max(
@@ -127,14 +114,14 @@ lazy_static! {
 
 impl DBChunk {
 	pub fn chunk(&self) -> &Chunk {
-		return &self.chunk;
+		&self.chunk
 	}
 	pub fn set_owner(&mut self, owner: String) {
 		self.chunk.owner = owner;
 	}
-	/**
-	 * Fills props with extracted static values
-	 */
+
+	/// Fills props with extracted static values
+
 	fn extract(&mut self) {
 		// Clear previous
 		self.props.clear();
@@ -148,7 +135,7 @@ impl DBChunk {
 			if let Some(m) = captures.get(2) {
 				let parents = m
 					.as_str()
-					.split(",")
+					.split(',')
 					.filter_map(|v| {
 						let v = v.trim();
 						if v.is_empty() {
@@ -166,10 +153,9 @@ impl DBChunk {
 		for capture in REGEX_PROPERTY.captures_iter(&self.chunk.value) {
 			if let Some(prop_name) = capture.get(1) {
 				// Insert `<key>: <value>`, replace value with empty string if None
-				self.props.insert(
-					prop_name.as_str().into(),
-					json!(capture.get(2).and_then(|m| Some(m.as_str()))),
-				);
+				self
+					.props
+					.insert(prop_name.as_str().into(), json!(capture.get(2).map(|m| m.as_str())));
 			}
 		}
 
@@ -228,7 +214,7 @@ impl DBChunk {
 	/// Other could be None if deletion/creation is happening
 	pub fn access_diff(&self, other: Option<&Self>) -> HashSet<String> {
 		let access = self.access();
-		let access_other = other.and_then(|v| Some(v.access())).unwrap_or_default();
+		let access_other = other.map(|v| v.access()).unwrap_or_default();
 
 		access
 			.symmetric_difference(&access_other)
@@ -238,9 +224,9 @@ impl DBChunk {
 	pub fn props_diff(&self, other: Option<&Self>) -> HashSet<String> {
 		let mut props = self.props().into_iter().collect::<Map<String, Value>>();
 		let props_other = other
-			.and_then(|o| Some(o.props().into_iter().collect::<Map<String, Value>>()))
+			.map(|o| o.props().into_iter().collect::<Map<String, Value>>())
 			.unwrap_or_default();
-		props.retain(|k, v| props_other.get(k).and_then(|_v| Some(_v != v)).unwrap_or(true));
+		props.retain(|k, v| props_other.get(k).map(|_v| _v != v).unwrap_or(true));
 
 		props.into_iter().map(|(k, _)| k).collect()
 	}
@@ -267,13 +253,8 @@ impl DBChunk {
 		keys
 			.into_iter()
 			.filter_map(|key| {
-				// let key = prop.key.clone();
 				let value = self.get_prop_dynamic::<Value>(&key, ua);
-				if let Some(value) = value {
-					Some((key, value))
-				} else {
-					None
-				}
+				value.map(|value| (key, value))
 			})
 			.collect()
 	}
@@ -290,7 +271,7 @@ impl DBChunk {
 			if let Some(prop) = DYNAMIC_PROPS
 				.iter()
 				.chain(self.props_dynamic_custom.iter())
-				.find_map(|prop| if prop.key == key { Some(prop) } else { None })
+				.find(|prop| prop.key == key)
 			{
 				function = Some(prop.function);
 				up = prop.function_up;
@@ -312,11 +293,11 @@ impl DBChunk {
 
 		None
 	}
-	/**
-	 * Recursive invalidator of passed `keys`
-	 * up: true (recurse parents) / false (children)
-	 */
-	pub fn invalidate(&mut self, keys: &Vec<&str>, up: bool) {
+
+	/// Recursive invalidator of passed `keys`
+	/// up: true (recurse parents) / false (children)
+
+	pub fn invalidate(&mut self, _keys: &Vec<&str>, up: bool) {
 		// self.props_per_user.retain(|(_, k), _| !keys.contains(&k.as_str()));
 		self.props_per_user.clear(); // FOR NOW CLEAR IT ALL
 
@@ -324,7 +305,7 @@ impl DBChunk {
 		others
 			.iter()
 			.filter_map(|v| v.upgrade())
-			.for_each(|v| v.write().unwrap().invalidate(keys, up));
+			.for_each(|v| v.write().unwrap().invalidate(_keys, up));
 	}
 	// pub fn invalidate_for_user(&mut self, keys: &Vec<&str>, up: bool) {
 	// 	self.props_per_user.retain(|(_, k), _| !keys.contains(&k.as_str()));
@@ -335,9 +316,8 @@ impl DBChunk {
 	// 		.for_each(|v| v.write().unwrap().invalidate(keys, up));
 	// }
 
-	/**
-	 * Checks if user has X access. Always returns true if user is the owner.
-	 */
+	/// Checks if user has X access. Always returns true if user is the owner.
+
 	pub fn has_access(&self, ua: &UserAccess) -> bool {
 		if self.chunk.owner == ua.user {
 			return true;
@@ -354,12 +334,12 @@ impl DBChunk {
 	pub fn is_public(&self) -> bool {
 		self
 			.get_prop::<HashSet<UserAccess>>("access")
-			.and_then(|access| Some(access.contains(&"public".into())))
+			.map(|access| access.contains(&"public".into()))
 			.unwrap_or(false)
 	}
-	/**
-	 * Returns highest access user is allowed for this chunk
-	 */
+	///
+	/// Returns highest access user is allowed for this chunk
+	///
 	pub fn highest_access(&self, user: &str) -> Option<Access> {
 		if self.chunk.owner == user {
 			return Some(Access::Owner);
@@ -374,9 +354,9 @@ impl DBChunk {
 			access.first().cloned()
 		})
 	}
-	/**
-	 * Enforces security rules when updating a DBChunk
-	 */
+	///
+	/// Enforces security rules when updating a DBChunk
+	///
 	pub fn try_clone_to(&self, other: &mut Self, user: &str) -> bool {
 		let print_err = |s| {
 			error!("Cant clone {}, {}", self.chunk().id, s);
@@ -424,7 +404,7 @@ impl DBChunk {
 				}
 			}
 		}
-		
+
 		false
 	}
 	pub fn parents(&self, ua: Option<&UserAccess>) -> Vec<Arc<RwLock<DBChunk>>> {
@@ -434,7 +414,7 @@ impl DBChunk {
 			.filter_map(|v_weak| {
 				if let Some(v_rc) = v_weak.upgrade() {
 					if let Some(ua) = ua {
-						if let Some(mut v) = v_rc.write().ok() {
+						if let Ok(v) = v_rc.write() {
 							if !v.has_access(ua) {
 								return None;
 							}
@@ -442,7 +422,7 @@ impl DBChunk {
 					} else {
 						return Some(v_rc); // If ua is None
 					}
-					return Some(v_rc); // If ua is Some and user had access
+					Some(v_rc) // If ua is Some and user had access
 				} else {
 					None // If item has been dropped
 				}
@@ -456,7 +436,7 @@ impl DBChunk {
 			.filter_map(|v_weak| {
 				if let Some(v_rc) = v_weak.upgrade() {
 					if let Some(ua) = ua {
-						if let Some(mut v) = v_rc.write().ok() {
+						if let Ok(v) = v_rc.write() {
 							if !v.has_access(ua) {
 								return None;
 							}
@@ -464,39 +444,39 @@ impl DBChunk {
 					} else {
 						return Some(v_rc); // If ua is None
 					}
-					return Some(v_rc); // If ua is Some and user had access
+					Some(v_rc) // If ua is Some and user had access
 				} else {
 					None // If item has been dropped
 				}
 			})
 			.collect()
 	}
-	/**
-	 * Links child and removes any dangling pointers for a self healing vector
-	 */
+
+	/// Links child and removes any dangling pointers for a self healing vector
+
 	pub fn link_child(&mut self, child: &Arc<RwLock<DBChunk>>) {
 		self.children.push(Arc::downgrade(child));
 		self.children.retain(|v| v.upgrade().is_some());
 	}
-	/**
-	 * Links child and removes any dangling pointers for a self healing vector
-	 */
+
+	/// Links child and removes any dangling pointers for a self healing vector
+
 	pub fn link_parent(&mut self, parent: &Arc<RwLock<DBChunk>>) {
 		self.parents.push(Arc::downgrade(parent));
 		self.parents.retain(|v| v.upgrade().is_some());
 	}
 }
 
-pub fn extract_access(value: &String, access: &mut HashSet<UserAccess>) {
-	for capture in REGEX_ACCESS.captures_iter(&value) {
+pub fn extract_access(value: &str, access: &mut HashSet<UserAccess>) {
+	for capture in REGEX_ACCESS.captures_iter(value) {
 		if let Some(m) = capture.get(1) {
 			m.as_str()
 				.to_lowercase()
-				.split(",")
+				.split(',')
 				.filter_map(|ua| {
 					let user_access = ua
 						.trim()
-						.split(" ")
+						.split(' ')
 						.filter_map(|v| {
 							let o = v.trim();
 							if o.is_empty() {
@@ -537,7 +517,7 @@ pub fn extract_access(value: &String, access: &mut HashSet<UserAccess>) {
 						access.insert((ua.user.clone(), Access::Read).into());
 					}
 					if ua.access == Access::Admin {
-						access.insert((ua.user.clone(), Access::Write).into());
+						access.insert((ua.user, Access::Write).into());
 					}
 				});
 		}
@@ -546,23 +526,22 @@ pub fn extract_access(value: &String, access: &mut HashSet<UserAccess>) {
 
 #[cfg(test)]
 mod tests {
-	use log::info;
 
-	use crate::v1::db::{Access, Chunk};
+	use crate::v1::db::Access;
 
 	use super::DBChunk;
 
 	#[test]
 	fn test() {
-		let mut chunk = DBChunk::from((None, "# Testing\n", "john"));
+		let chunk = DBChunk::from((None, "# Testing\n", "john"));
 		assert!(chunk.has_access(&"john".into()));
 		assert_eq!(chunk.has_access(&"nina".into()), false);
-		let mut chunk = DBChunk::from((None, "# Testing\naccess:nina r", "john"));
+		let chunk = DBChunk::from((None, "# Testing\naccess:nina r", "john"));
 		assert_eq!(chunk.has_access(&"nina".into()), true);
-		let mut chunk = DBChunk::from((None, "# Testing\naccess:nina w", "john"));
+		let chunk = DBChunk::from((None, "# Testing\naccess:nina w", "john"));
 		assert_eq!(chunk.has_access(&"nina".into()), true);
 		assert_eq!(chunk.has_access(&("nina", Access::Write).into()), true);
-		let mut chunk = DBChunk::from((None, "# Testing\naccess:nina a", "john"));
+		let chunk = DBChunk::from((None, "# Testing\naccess:nina a", "john"));
 		assert_eq!(chunk.has_access(&"nina".into()), true);
 		assert_eq!(chunk.has_access(&("nina", Access::Write).into()), true);
 		assert_eq!(chunk.has_access(&("nina", Access::Admin).into()), true);

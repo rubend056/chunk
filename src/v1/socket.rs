@@ -1,7 +1,7 @@
 use std::{
 	collections::{HashSet, VecDeque},
 	net::SocketAddr,
-	sync::{Arc, RwLock, Mutex},
+	sync::{RwLock},
 	time::Duration,
 };
 
@@ -23,7 +23,7 @@ use tokio::{
 	time,
 };
 
-use crate::{v1::db::{db_chunk::DBChunk, Access, ChunkId, ChunkVec, ChunkView, SortType, ViewType, ChunkValue}};
+use crate::{v1::db::{db_chunk::DBChunk, ChunkVec, ChunkView, SortType, ViewType, ChunkValue}};
 
 use super::{auth::UserClaims, ends::DB};
 
@@ -92,7 +92,7 @@ impl From<MessageType> for SocketMessage {
 pub struct ResourceMessage {
 	pub id: usize,
 	pub resource: String,
-	pub resourceId: Option<String>,
+	pub resource_id: Option<String>,
 	pub value: String,
 	pub users: HashSet<String>,
 	/// If this is Some, sockets that have contained users will close.
@@ -103,7 +103,7 @@ impl Default for ResourceMessage {
 		Self {
 			id: resource_id_next(),
 			resource: Default::default(),
-			resourceId: Default::default(),
+			resource_id: Default::default(),
 			value: Default::default(),
 			users: Default::default(),
 			close_for_users: None,
@@ -139,7 +139,7 @@ impl<T: Serialize> From<(&str, HashSet<String>, &T)> for ResourceMessage {
 static mut RESOURCE_ID: usize = 0;
 fn resource_id_next() -> usize {
 	unsafe {
-		let j = RESOURCE_ID.clone();
+		let j = RESOURCE_ID;
 		RESOURCE_ID += 1;
 		j
 	}
@@ -236,7 +236,7 @@ async fn handle_socket(
 				}
 				Some(Message::Text(serde_json::to_string(&v).unwrap()))
 			};
-			let mut res = m.resource.split("/").collect::<VecDeque<_>>();
+			let mut res = m.resource.split('/').collect::<VecDeque<_>>();
 			let mut piece = res.pop_front();
 
 			if piece == Some("chunks") {
@@ -259,7 +259,7 @@ async fn handle_socket(
 									tx_resource.send(m).unwrap();
 									tx_resource.send(ResourceMessage::from((format!("chunks/{}", id).as_str(), users, &ChunkView::from((db_chunk, user.as_str(), ViewType::Edit))))).unwrap();
 	
-									if users_to_notify.len() > 0 {
+									if !users_to_notify.is_empty() {
 										tx_resource
 											.send(ResourceMessage::from(("chunks", users_to_notify)))
 											.unwrap();
@@ -271,17 +271,17 @@ async fn handle_socket(
 							}
 						} else {
 							// Request for "chunks/<id>/value"
-							if let Some(v) = db.read().unwrap().get_chunk(id, &user) {
+							if let Some(v) = db.read().unwrap().get_chunk(id, user) {
 								return reply((&ChunkValue::from(v)).into());
 							}
 						}
-					} else if piece == None {
-						if let Some(v) = db.read().unwrap().get_chunk(id, &user) {
+					} else if piece.is_none() {
+						if let Some(v) = db.read().unwrap().get_chunk(id, user) {
 							return reply((&ChunkView::from((v, user.as_str(), ViewType::Edit))).into());
 						}
 					}
 					 
-					return reply((MessageType::Error, &format!("NotFound")).into());
+					return reply((MessageType::Error, &"NotFound".to_string()).into());
 				} else {
 					// Request for "chunks"
 					// return reply((&get_notes()).into());
@@ -303,7 +303,7 @@ async fn handle_socket(
 				if let Value::Object(mut user_o) = user {
 					let mut db = db.write().unwrap();
 					let chunks = db.get_chunks(&user_claims.user);
-					user_o.insert("notes_visible".into(), chunks.iter().count().into());
+					user_o.insert("notes_visible".into(), chunks.len().into());
 					user_o.insert(
 						"notes_owned".into(),
 						chunks
